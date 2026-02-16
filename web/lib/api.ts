@@ -316,6 +316,12 @@ export const api = {
   // ── Onboarding ──
   analyzeOnboarding: () =>
     request<OnboardingResult>("/onboarding/analyze", { method: "POST" }),
+
+  saveOnboardingProfile: (profile: { name?: string; work?: string; goals?: string; timezone?: string }) =>
+    request<{ ok: boolean; saved: Record<string, string> }>("/onboarding/profile", {
+      method: "POST",
+      body: JSON.stringify(profile),
+    }),
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

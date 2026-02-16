@@ -14,7 +14,7 @@ import type { BriefingData, ChatMessage, OnboardingResult, Proposal, SkillInfo, 
 
 type View = "home" | "briefing" | "chat" | "skills" | "settings" | "onboarding";
 type Theme = "dark" | "light";
-type OnboardingStep = "welcome" | "connect" | "analyzing" | "reveal";
+type OnboardingStep = "welcome" | "connect" | "analyzing" | "reveal" | "interview";
 
 interface AppState {
   // ── Navigation ──
@@ -80,6 +80,15 @@ function getInitialTheme(): Theme {
     // SSR or blocked storage
   }
   return "dark";
+}
+
+function getInitialOnboardingComplete(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem("omnibrain-onboarding-complete") === "true";
+  } catch {
+    return false;
+  }
 }
 
 function applyTheme(theme: Theme) {
@@ -156,8 +165,15 @@ export const useStore = create<AppState>((set) => ({
   // Onboarding
   onboardingStep: "welcome",
   setOnboardingStep: (onboardingStep) => set({ onboardingStep }),
-  onboardingComplete: false,
-  setOnboardingComplete: (onboardingComplete) => set({ onboardingComplete }),
+  onboardingComplete: getInitialOnboardingComplete(),
+  setOnboardingComplete: (onboardingComplete) => {
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("omnibrain-onboarding-complete", String(onboardingComplete));
+      }
+    } catch { /* quota or private mode */ }
+    set({ onboardingComplete });
+  },
   googleConnected: false,
   setGoogleConnected: (googleConnected) => set({ googleConnected }),
   onboardingResult: null,

@@ -1,10 +1,11 @@
 /**
- * Onboarding — 4-step "Holy Shit" experience.
+ * Onboarding — 5-step "Holy Shit" experience.
  *
- * Step 1  Welcome   — hero + [Start Free] button
- * Step 2  Connect   — Google OAuth button
- * Step 3  Analyzing — animated progress
- * Step 4  Reveal    — greeting + stats + insight cards
+ * Step 1  Welcome    — hero + [Start Free] button
+ * Step 2  Connect    — Google OAuth button (or skip)
+ * Step 3a Analyzing  — animated progress (if Google connected)
+ * Step 3b Interview  — conversational profile building (if skipped)
+ * Step 4  Reveal     — greeting + stats + insight cards
  *
  * Goal: < 30 seconds from click to first insight.
  */
@@ -12,7 +13,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "@/lib/api";
+import { api, streamChat } from "@/lib/api";
 import type { InsightCard as InsightCardType, OnboardingResult } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -472,6 +473,217 @@ function RevealStep({
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Step 3b: Conversational Interview (when Google is skipped)
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface InterviewMessage {
+  role: "assistant" | "user";
+  text: string;
+}
+
+const INTERVIEW_QUESTIONS = [
+  "Hey! I'm OmniBrain. What's your name?",
+  "Nice to meet you, {name}! What do you do — what are you working on?",
+  "That's interesting. What's the one thing you wish you had more time for?",
+];
+
+function InterviewStep({ onComplete }: { onComplete: () => void }) {
+  const [messages, setMessages] = useState<InterviewMessage[]>([
+    { role: "assistant", text: INTERVIEW_QUESTIONS[0] },
+  ]);
+  const [input, setInput] = useState("");
+  const [questionIndex, setQuestionIndex] = useState(0);
+  const [answers, setAnswers] = useState<{ name: string; work: string; goals: string }>({
+    name: "",
+    work: "",
+    goals: "",
+  });
+  const [streaming, setStreaming] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [messages]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || streaming) return;
+
+    const userText = input.trim();
+    setInput("");
+
+    // Add user message
+    setMessages((prev) => [...prev, { role: "user", text: userText }]);
+
+    // Store the answer
+    const newAnswers = { ...answers };
+    if (questionIndex === 0) newAnswers.name = userText;
+    else if (questionIndex === 1) newAnswers.work = userText;
+    else if (questionIndex === 2) newAnswers.goals = userText;
+    setAnswers(newAnswers);
+
+    const nextQ = questionIndex + 1;
+    setQuestionIndex(nextQ);
+
+    if (nextQ < INTERVIEW_QUESTIONS.length) {
+      // Show next question with a brief pause
+      setStreaming(true);
+      const nextText = INTERVIEW_QUESTIONS[nextQ].replace("{name}", newAnswers.name || "friend");
+
+      // Stream the response from the LLM for a more natural feel
+      setMessages((prev) => [...prev, { role: "assistant", text: "" }]);
+      try {
+        const context = `The user just said: "${userText}". Respond warmly in 1-2 sentences, then ask: "${nextText}" — keep it natural and conversational. Do NOT use markdown formatting.`;
+        let fullText = "";
+        for await (const event of streamChat(context)) {
+          if (event.type === "token" && event.content) {
+            fullText += event.content;
+            setMessages((prev) => {
+              const msgs = [...prev];
+              msgs[msgs.length - 1] = { role: "assistant", text: fullText };
+              return msgs;
+            });
+          }
+          if (event.type === "done") break;
+        }
+      } catch {
+        // Fallback to static question if LLM fails
+        setMessages((prev) => {
+          const msgs = [...prev];
+          msgs[msgs.length - 1] = { role: "assistant", text: nextText };
+          return msgs;
+        });
+      }
+      setStreaming(false);
+    } else {
+      // All questions answered — save profile and finish
+      setStreaming(true);
+      setMessages((prev) => [...prev, { role: "assistant", text: "" }]);
+
+      try {
+        // Save profile to backend
+        await api.saveOnboardingProfile({
+          name: newAnswers.name,
+          work: newAnswers.work,
+          goals: newAnswers.goals,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        });
+
+        // Stream a farewell
+        const farewell = `The user's name is ${newAnswers.name}, they work on ${newAnswers.work}, and their goal is ${newAnswers.goals}. Give a warm, brief (2-3 sentences) welcome message saying you're ready to help them. Use their name. Do NOT use markdown.`;
+        let fullText = "";
+        for await (const event of streamChat(farewell)) {
+          if (event.type === "token" && event.content) {
+            fullText += event.content;
+            setMessages((prev) => {
+              const msgs = [...prev];
+              msgs[msgs.length - 1] = { role: "assistant", text: fullText };
+              return msgs;
+            });
+          }
+          if (event.type === "done") break;
+        }
+      } catch {
+        setMessages((prev) => {
+          const msgs = [...prev];
+          msgs[msgs.length - 1] = {
+            role: "assistant",
+            text: `Welcome aboard, ${newAnswers.name}! I'm ready to help you. Let's get started.`,
+          };
+          return msgs;
+        });
+      }
+
+      setStreaming(false);
+      // Show "Let's go" button after a moment
+      setTimeout(onComplete, 2000);
+    }
+  };
+
+  const isFinished = questionIndex >= INTERVIEW_QUESTIONS.length && !streaming;
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[80vh] px-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+      <div className="w-full max-w-lg flex flex-col h-[60vh]">
+        {/* Messages */}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-4 mb-4 pr-2">
+          {messages.map((msg, i) => (
+            <div
+              key={i}
+              className={cn(
+                "flex",
+                msg.role === "user" ? "justify-end" : "justify-start",
+              )}
+            >
+              <div
+                className={cn(
+                  "max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
+                  msg.role === "user"
+                    ? "bg-[var(--brand-primary)] text-white"
+                    : "bg-[var(--bg-secondary)] border border-[var(--border-default)] text-[var(--text-primary)]",
+                )}
+              >
+                {msg.text || (
+                  <span className="flex gap-1">
+                    {[0, 1, 2].map((i) => (
+                      <span
+                        key={i}
+                        className="h-2 w-2 bg-[var(--text-tertiary)] rounded-full animate-bounce"
+                        style={{ animationDelay: `${i * 150}ms` }}
+                      />
+                    ))}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Input or Finish button */}
+        {isFinished ? (
+          <button
+            onClick={onComplete}
+            className="w-full px-8 py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-[var(--brand-primary)] to-[var(--accent-orange)] hover:opacity-90 transition-opacity shadow-lg shadow-[var(--brand-primary)]/25"
+          >
+            Let&rsquo;s go
+          </button>
+        ) : (
+          <form onSubmit={handleSubmit} className="flex gap-3">
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Type your answer..."
+              className={cn(
+                "flex-1 h-11 px-4 rounded-xl",
+                "bg-[var(--bg-secondary)] border border-[var(--border-default)]",
+                "text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]",
+                "focus:border-[var(--brand-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--brand-primary)]",
+              )}
+              disabled={streaming}
+              autoFocus
+            />
+            <button
+              type="submit"
+              disabled={!input.trim() || streaming}
+              className={cn(
+                "h-11 px-6 rounded-xl font-semibold text-white",
+                "bg-[var(--brand-primary)] hover:opacity-90 transition-opacity",
+                "disabled:opacity-40 disabled:cursor-not-allowed",
+              )}
+            >
+              Send
+            </button>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Main Onboarding Page
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -484,7 +696,7 @@ export const OnboardingPage: React.FC = () => {
   const setView = useStore((s) => s.setView);
 
   const stepIndex =
-    step === "welcome" ? 0 : step === "connect" ? 1 : step === "analyzing" ? 2 : 3;
+    step === "welcome" ? 0 : step === "connect" ? 1 : step === "analyzing" || step === "interview" ? 2 : 3;
 
   const handleOAuthConnected = useCallback(() => {
     setGoogleConnected(true);
@@ -505,8 +717,12 @@ export const OnboardingPage: React.FC = () => {
   }, [setOnboardingComplete, setView]);
 
   const handleSkipGoogle = useCallback(() => {
+    setStep("interview");
+  }, [setStep]);
+
+  const handleInterviewComplete = useCallback(() => {
     setOnboardingComplete(true);
-    setView("home");
+    setView("chat");
   }, [setOnboardingComplete, setView]);
 
   return (
@@ -518,6 +734,7 @@ export const OnboardingPage: React.FC = () => {
       {step === "welcome" && <WelcomeStep onNext={() => setStep("connect")} />}
       {step === "connect" && <ConnectStep onConnected={handleOAuthConnected} onSkip={handleSkipGoogle} />}
       {step === "analyzing" && <AnalyzingStep onComplete={handleAnalysisComplete} />}
+      {step === "interview" && <InterviewStep onComplete={handleInterviewComplete} />}
       {step === "reveal" && (
         <RevealStep
           result={useStore.getState().onboardingResult!}

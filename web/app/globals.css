@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    OmniBrain Design System — from docs/UX-BIBLE.md

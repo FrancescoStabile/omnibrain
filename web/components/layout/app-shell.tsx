@@ -56,23 +56,31 @@ export function AppShell() {
       return;
     }
 
-    // Check backend for Google connection
-    api
-      .getOAuthStatus()
-      .then((status) => {
-        if (status.connected) {
-          setGoogleConnected(true);
-          setOnboardingComplete(true);
-        } else {
-          // First time: show onboarding
-          setView("onboarding");
-        }
-      })
-      .catch(() => {
-        // Backend unreachable — skip onboarding, show home
+    // Already completed onboarding (persisted in localStorage)
+    if (useStore.getState().onboardingComplete) {
+      setReady(true);
+      return;
+    }
+
+    // Check backend: if user has a name in settings, they already onboarded
+    Promise.all([
+      api.getOAuthStatus().catch(() => ({ connected: false })),
+      api.getSettings().catch(() => null),
+    ]).then(([oauthStatus, settings]) => {
+      if (oauthStatus.connected) {
+        setGoogleConnected(true);
         setOnboardingComplete(true);
-      })
-      .finally(() => setReady(true));
+      } else if (settings?.profile?.name) {
+        // User completed interview-based onboarding previously
+        setOnboardingComplete(true);
+      } else {
+        // First time: show onboarding
+        setView("onboarding");
+      }
+    }).catch(() => {
+      // Backend unreachable — skip onboarding, show home
+      setOnboardingComplete(true);
+    }).finally(() => setReady(true));
   }, [setView, setOnboardingComplete, setGoogleConnected, setOnboardingStep]);
 
   if (!ready) {

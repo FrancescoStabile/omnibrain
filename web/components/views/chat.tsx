@@ -8,8 +8,10 @@
 
 import { useRef, useState, useEffect, type FormEvent } from "react";
 import { Send, Sparkles, Brain, Copy } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useStore } from "@/lib/store";
-import { api, type ChatMessage } from "@/lib/api";
+import { streamChat, type ChatMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -47,8 +49,15 @@ function ChatBubble({ message }: { message: ChatMessage }) {
             : "bg-[var(--bg-secondary)] text-[var(--text-primary)] border border-[var(--border-subtle)]",
         )}
       >
-        {/* Render content as simple text — markdown rendering can be added later */}
-        <div className="whitespace-pre-wrap">{message.content}</div>
+        {isUser ? (
+          <div className="whitespace-pre-wrap">{message.content}</div>
+        ) : (
+          <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5 prose-headings:my-2 prose-pre:my-2 prose-code:text-[var(--brand-primary)] prose-code:bg-[var(--bg-tertiary)] prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-a:text-[var(--brand-primary)] prose-strong:text-[var(--text-primary)]">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {message.content}
+            </ReactMarkdown>
+          </div>
+        )}
 
         {/* Actions */}
         {message.actions && message.actions.length > 0 && (
@@ -101,7 +110,7 @@ function TypingIndicator() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function ChatPage() {
-  const { messages, addMessage, chatLoading, setChatLoading } = useStore();
+  const { messages, addMessage, appendToLastAssistant, chatLoading, setChatLoading } = useStore();
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -131,20 +140,25 @@ export function ChatPage() {
     setInput("");
     setChatLoading(true);
 
+    // Add an empty assistant message to fill via streaming
+    addMessage({
+      role: "assistant",
+      content: "",
+      timestamp: new Date().toISOString(),
+    });
+
     try {
-      const res = await api.sendMessage(text.trim());
-      const aiMsg: ChatMessage = {
-        role: "assistant",
-        content: res.response,
-        timestamp: new Date().toISOString(),
-      };
-      addMessage(aiMsg);
+      for await (const event of streamChat(text.trim())) {
+        if (event.type === "token" && event.content) {
+          appendToLastAssistant(event.content);
+        }
+        if (event.type === "done") {
+          break;
+        }
+      }
     } catch {
-      addMessage({
-        role: "assistant",
-        content: "Something went wrong. Please try again.",
-        timestamp: new Date().toISOString(),
-      });
+      // Replace the empty assistant message with an error
+      appendToLastAssistant("Something went wrong. Please try again.");
     } finally {
       setChatLoading(false);
     }

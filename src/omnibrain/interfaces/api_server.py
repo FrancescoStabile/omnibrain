@@ -61,6 +61,8 @@ from urllib.parse import urlencode
 from omnibrain.db import OmniBrainDB
 from omnibrain.memory import MemoryManager
 
+from omnigent.router import LLMRouter, Provider, StreamChunk
+
 logger = logging.getLogger("omnibrain.api")
 
 # Lazy import FastAPI — allows using formatters/helpers without the server
@@ -215,6 +217,13 @@ if _fastapi_available:
         completed_at: str = ""
         duration_ms: int = 0
 
+    class OnboardingProfileRequest(BaseModel):
+        """Profile info gathered from conversational onboarding."""
+        name: str = ""
+        work: str = ""
+        goals: str = ""
+        timezone: str = ""
+
     # ── Structured Briefing models ──
 
     class EmailSectionResponse(BaseModel):
@@ -292,6 +301,7 @@ class OmniBrainAPIServer:
         auth_token: str = "",
         version: str = "0.1.0",
         data_dir: Path | None = None,
+        router: LLMRouter | None = None,
     ):
         if not _fastapi_available:
             raise RuntimeError("FastAPI not installed")
@@ -305,6 +315,10 @@ class OmniBrainAPIServer:
         self._data_dir = data_dir or Path.home() / ".omnibrain"
         self._start_time = datetime.now()
         self._ws_clients: set[Any] = set()
+        self._router = router
+
+        # Load system prompt
+        self._system_prompt = self._load_system_prompt()
 
         self.app = FastAPI(
             title="OmniBrain API",
@@ -313,6 +327,13 @@ class OmniBrainAPIServer:
         )
 
         self._register_routes()
+
+    def _load_system_prompt(self) -> str:
+        """Load the system prompt from prompts/system.md."""
+        prompt_file = Path(__file__).parent.parent / "prompts" / "system.md"
+        if prompt_file.exists():
+            return prompt_file.read_text()
+        return "You are OmniBrain, a personal AI assistant."
 
     def _verify_token(self, token: str) -> bool:
         """Verify the API token. Empty auth_token = no auth needed."""
@@ -595,18 +616,51 @@ class OmniBrainAPIServer:
             body: MessageRequest,
             token: str = Depends(verify_api_key),
         ) -> MessageResponse:
-            """Process a user message. Phase 1: memory search. Phase 2: full agent."""
+            """Process a user message. Uses LLM with memory context."""
             if not body.text.strip():
                 raise HTTPException(status_code=400, detail="Empty message")
 
+            # Search memory for context
+            memory_context = ""
             if self._memory:
                 results = self._memory.search(body.text, max_results=3)
                 if results:
-                    combined = "\n".join(doc.text[:200] for doc in results)
-                    return MessageResponse(response=combined, source="memory")
+                    memory_context = "\n".join(doc.text[:200] for doc in results)
+
+            # Call LLM if router is available
+            if self._router:
+                try:
+                    system = self._system_prompt
+                    if memory_context:
+                        system += f"\n\nRelevant memories:\n{memory_context}"
+
+                    messages = [{"role": "user", "content": body.text}]
+                    response_parts: list[str] = []
+                    async for chunk in self._router.stream(messages=messages, system=system):
+                        if chunk.content:
+                            response_parts.append(chunk.content)
+                        if chunk.done:
+                            break
+                    response = "".join(response_parts)
+
+                    # Store in memory
+                    if self._memory and response.strip():
+                        self._memory.store(
+                            text=f"User: {body.text}\nAssistant: {response[:500]}",
+                            source="chat",
+                            source_type="conversation",
+                        )
+
+                    return MessageResponse(response=response, source="llm")
+                except Exception as e:
+                    logger.error(f"LLM call failed in /message: {e}")
+
+            # Fallback to memory
+            if memory_context:
+                return MessageResponse(response=memory_context, source="memory")
 
             return MessageResponse(
-                response="No relevant information found. Full agent processing coming in Phase 2.",
+                response="I'm OmniBrain. No LLM API key is configured yet — check your .env file.",
                 source="none",
             )
 
@@ -756,31 +810,87 @@ class OmniBrainAPIServer:
         ) -> StreamingResponse:
             """Streaming chat via Server-Sent Events.
 
-            Falls back to memory search until the full agent is wired.
+            Sends the user message to the LLM router with memory context
+            and streams the response token by token.
             """
             async def event_generator() -> Any:
-                # Phase 1: memory-backed response
-                response_text = ""
+                # ── 1. Gather memory context ──
+                memory_context = ""
                 if self._memory and body.message.strip():
-                    results = self._memory.search(body.message, max_results=3)
+                    results = self._memory.search(body.message, max_results=5)
                     if results:
-                        response_text = "\n".join(doc.text[:200] for doc in results)
+                        snippets = []
+                        for doc in results:
+                            snippet = doc.text[:300].strip()
+                            if doc.source:
+                                snippet = f"[{doc.source_type or 'memory'}] {snippet}"
+                            snippets.append(snippet)
+                        memory_context = (
+                            "\n\n---\n**Your memories relevant to this question:**\n"
+                            + "\n".join(f"- {s}" for s in snippets)
+                        )
 
-                if not response_text:
-                    response_text = (
-                        "I'm still learning. Full conversational AI will be "
-                        "available once the agent pipeline is connected."
-                    )
+                # ── 2. Build system prompt ──
+                system = self._system_prompt
+                user_name = self._db.get_preference("user_name", "")
+                if user_name:
+                    system += f"\n\nThe user's name is {user_name}."
+                if memory_context:
+                    system += memory_context
 
-                # Stream the response token-by-token (simulated for now)
-                words = response_text.split()
-                for i, word in enumerate(words):
-                    chunk = word + (" " if i < len(words) - 1 else "")
-                    data = json.dumps({"type": "token", "content": chunk})
-                    yield f"data: {data}\n\n"
-                    await asyncio.sleep(0.02)
+                # ── 3. Build messages ──
+                messages = [{"role": "user", "content": body.message}]
 
-                # End signal
+                # ── 4. Stream from LLM or fallback ──
+                full_response = ""
+
+                if self._router:
+                    try:
+                        async for chunk in self._router.stream(
+                            messages=messages,
+                            system=system,
+                        ):
+                            if chunk.content:
+                                full_response += chunk.content
+                                data = json.dumps({"type": "token", "content": chunk.content})
+                                yield f"data: {data}\n\n"
+                            if chunk.done:
+                                break
+                    except Exception as e:
+                        logger.error(f"LLM streaming failed: {e}")
+                        error_msg = "I'm having trouble connecting to the AI service right now. Please try again in a moment."
+                        data = json.dumps({"type": "token", "content": error_msg})
+                        yield f"data: {data}\n\n"
+                        full_response = error_msg
+                else:
+                    # No router — fallback to memory-only response
+                    if memory_context:
+                        fallback = "Based on what I remember:\n"
+                        for doc in (self._memory.search(body.message, max_results=3) if self._memory else []):
+                            fallback += f"\n- {doc.text[:200]}"
+                    else:
+                        fallback = "Ciao! I'm OmniBrain. I'm awake but the LLM router isn't configured yet. Check your API keys in .env."
+                    words = fallback.split()
+                    for i, word in enumerate(words):
+                        tok = word + (" " if i < len(words) - 1 else "")
+                        data = json.dumps({"type": "token", "content": tok})
+                        yield f"data: {data}\n\n"
+                        await asyncio.sleep(0.02)
+                    full_response = fallback
+
+                # ── 5. Store conversation in memory ──
+                if self._memory and body.message.strip() and full_response.strip():
+                    try:
+                        self._memory.store(
+                            text=f"User: {body.message}\nAssistant: {full_response[:500]}",
+                            source="chat",
+                            source_type="conversation",
+                            metadata={"session_id": body.session_id or "default"},
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to store chat in memory: {e}")
+
+                # ── 6. Done signal ──
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
             return StreamingResponse(
@@ -956,6 +1066,51 @@ class OmniBrainAPIServer:
             )
 
         # ══════════════════════════════════════════════════════════════════
+        # Onboarding — conversational profile save
+        # ══════════════════════════════════════════════════════════════════
+
+        @app.post("/api/v1/onboarding/profile")
+        async def onboarding_save_profile(
+            body: OnboardingProfileRequest,
+            token: str = Depends(verify_api_key),
+        ) -> dict[str, Any]:
+            """Save profile info from conversational onboarding (no Google needed)."""
+            saved: dict[str, str] = {}
+
+            if body.name:
+                self._db.set_preference("user_name", body.name, learned_from="onboarding_chat")
+                saved["name"] = body.name
+            if body.work:
+                self._db.set_preference("user_work", body.work, learned_from="onboarding_chat")
+                saved["work"] = body.work
+            if body.goals:
+                self._db.set_preference("user_goals", body.goals, learned_from="onboarding_chat")
+                saved["goals"] = body.goals
+            if body.timezone:
+                self._db.set_preference("timezone", body.timezone, learned_from="onboarding_chat")
+                saved["timezone"] = body.timezone
+
+            # Also store in memory for the LLM to reference
+            if self._memory:
+                profile_parts = []
+                if body.name:
+                    profile_parts.append(f"The user's name is {body.name}.")
+                if body.work:
+                    profile_parts.append(f"They work on: {body.work}.")
+                if body.goals:
+                    profile_parts.append(f"Their goals: {body.goals}.")
+                if profile_parts:
+                    self._memory.store(
+                        text=" ".join(profile_parts),
+                        source="onboarding",
+                        source_type="profile",
+                    )
+
+            self._db.set_preference("onboarding_complete", True, learned_from="onboarding_chat")
+
+            return {"ok": True, "saved": saved}
+
+        # ══════════════════════════════════════════════════════════════════
         # WebSocket feed for real-time events
         # ══════════════════════════════════════════════════════════════════
 
@@ -1006,6 +1161,24 @@ def create_api_server(
         from omnibrain.briefing import BriefingGenerator
         briefing_gen = BriefingGenerator(db, memory)
 
+    # Create LLM router — uses DeepSeek as primary (cheapest + fast)
+    router = None
+    try:
+        import os
+        if os.environ.get("DEEPSEEK_API_KEY"):
+            router = LLMRouter(primary=Provider.DEEPSEEK)
+            logger.info("LLM router initialized with DeepSeek as primary")
+        elif os.environ.get("OPENAI_API_KEY"):
+            router = LLMRouter(primary=Provider.OPENAI)
+            logger.info("LLM router initialized with OpenAI as primary")
+        elif os.environ.get("ANTHROPIC_API_KEY"):
+            router = LLMRouter(primary=Provider.CLAUDE)
+            logger.info("LLM router initialized with Claude as primary")
+        else:
+            logger.warning("No LLM API key found — chat will use fallback mode")
+    except Exception as e:
+        logger.warning(f"Failed to create LLM router: {e}")
+
     return OmniBrainAPIServer(
         db=db,
         memory_manager=memory,
@@ -1013,4 +1186,5 @@ def create_api_server(
         auth_token=auth_token,
         version=version,
         data_dir=actual_dir,
+        router=router,
     )

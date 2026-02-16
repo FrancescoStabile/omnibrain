@@ -2,216 +2,165 @@
 
 # OmniBrain
 
-**The AI that never sleeps.**
+**Your second brain. Open source. Unstoppable.**
 
-A local-first, open-source AI agent that monitors your digital life 24/7 and acts proactively on your behalf. Built on [Omnigent](https://github.com/FrancescoStabile/omnigent) — the most advanced open-source agent framework.
+An open-source AI platform that knows who you are, remembers everything, works 24/7, and grows smarter through community-built Skills.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-983%20passing-brightgreen.svg)]()
 [![Build in Public](https://img.shields.io/badge/build%20in%20public-daily%20on%20X-black.svg)](https://x.com/Francesco_Sta)
-[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-[Architecture](ARCHITECTURE.md) · [Manifesto](manifesto.md) · [Roadmap](docs/ROADMAP.md) · [Contributing](CONTRIBUTING.md)
+[Manifesto](manifesto.md) · [Docs](docs/INDEX.md) · [Skill Protocol](docs/SKILL-PROTOCOL.md) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
 ---
 
-> **OmniBrain is in active development.** We're building this in public, one day at a time. Follow the journey on [X/Twitter](https://x.com/Francesco_Sta). Star the repo to stay updated.
+## The Problem
 
----
+8 billion people talk to AI every day. None of these AIs know who they are.
 
-## What is OmniBrain?
+Every conversation starts from zero. Your digital life is chaos — emails, meetings, subscriptions, promises you made 3 months ago, information scattered across 15 apps. Current AI is reactive: you open the app, you formulate the question, you provide context, and it forgets everything when you close the tab.
 
-While you sleep, OmniBrain is working.
+## The Solution
 
-It triages your emails. Prepares your meeting briefs. Detects spending anomalies. Finds that conversation you had 3 weeks ago. Drafts responses for urgent messages. Builds a knowledge graph of **your** life — and uses it to act on your behalf.
+OmniBrain is a **personal AI platform** that:
 
-**OmniBrain is a persistent, proactive AI agent.** Not a chatbot. Not a memory tool. Not a task automator. It **observes, reasons, and acts** — continuously, locally, privately.
+- **Knows you** — Connects to your email, calendar, and more. Builds a personal knowledge graph.
+- **Remembers everything** — Full-text search + semantic memory. "What did Marco say about pricing?" → instant answer with sources.
+- **Works while you sleep** — Proactive engine detects patterns, proposes actions, prepares morning briefings.
+- **Grows through Skills** — Open Skill Protocol lets anyone teach it new abilities. Like extensions for VS Code.
+- **Stays private** — Local-first. Your data never leaves your machine. Open source. MIT license.
 
 ```
 While you slept (23:47 → 06:30):
 
 ✓ Triaged 12 emails (3 urgent, 4 FYI, 5 archived)
-✓ GitHub issue #52: analyzed codebase, found root cause in auth.py:147
-  → Proposed fix ready as draft PR
-✓ Investor replied at 02:14 — sentiment: positive
-  → Follow-up draft prepared
-✓ Subscription renewal detected: $49/mo for unused service
-  → Cancellation link ready (saves $588/year)
+✓ Found unanswered email from Marco (3 days ago) → draft ready
+✓ Detected unused subscription: €14.99/mo → cancellation link ready
+✓ Prepared morning briefing with today's meetings + talking points
 
-All actions are PROPOSALS. Nothing was sent without your approval.
-```
-
-### How is this different?
-
-| Product | Model | OmniBrain |
-|---------|-------|-----------|
-| ChatGPT / Claude | Reactive chat, session-based | Persistent, proactive, context-aware |
-| Siri / Alexa | Voice commands, no reasoning | Reasoning Graph, multi-step chains |
-| Rewind / Limitless | Passive memory capture | Active intelligence + action |
-| Apple Intelligence | Cloud-first, closed, generic | Local-first, open source, personal |
-
-**The Linux of personal AI.** Open source. Runs on your hardware. Your data never leaves your machine. No corporation can shut it down.
-
----
-
-## The Magic Moments
-
-These are the experiences that make OmniBrain worth having.
-
-### Morning Briefing
-```
-OmniBrain Morning Briefing — Feb 15, 2026
-
-Overnight analysis:
-• 34 emails received → 3 require your response (drafts ready)
-• Meeting at 14:00 with Investor X → talking points prepared
-• GitHub: 2 new issues, 1 PR needs review
-• Calendar conflict detected: moved standup to 10:30
-
-Your top 3 priorities today:
-1. Respond to investor follow-up (draft attached)
-2. Review PR #47 (found a potential bug on line 203)
-3. Prepare demo for Friday (outline started)
-```
-
-### Context Resurrection
-```
-You opened project "landing-page" (untouched for 23 days)
-
-OmniBrain remembers:
-• Last working on: hero section animation (components/Hero.tsx)
-• Blocked on: Framer Motion performance on mobile
-• Related conversation: You discussed this with Marco on Feb 2
-• Solution found since then: React Spring is 3x faster for this use case
-```
-
-### Knowledge Graph Query
-```
-You: "What did Marco say about the pricing model?"
-
-OmniBrain: Based on 3 conversations (email Feb 2, Telegram Feb 7, meeting Feb 11):
-
-1. Freemium won't work for B2B (Feb 2, email)
-2. Suggested $19/mo as sweet spot (Feb 7)
-3. Agreed to do user interviews for validation (Feb 11)
-
-No follow-up since Feb 11. Draft a reminder?
-```
-
-### Pattern Detection
-```
-I've noticed:
-• Every Monday at 9am you search for flight prices to Milano
-• You've done this 6 times in the past 2 months
-
-Proposed automation:
-"Every Sunday night, search flights and send top 3 options by Monday 8am"
-
-[Enable] [Customize] [Not interested]
+All actions are PROPOSALS. Nothing sent without your approval.
 ```
 
 ---
 
-## Architecture at a Glance
+## Why Platform, Not Product
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    OMNIBRAIN DAEMON (Python)                 │
-│                    Always running via systemd                │
-│                                                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐    │
-│  │  COLLECTOR   │  │  OMNIGENT    │  │  PROACTIVE       │    │
-│  │  SERVICE     │  │  BRAIN       │  │  ENGINE          │    │
-│  │              │  │              │  │                  │    │
-│  │ Gmail API    │  │ Agent Loop   │  │ Pattern Detector │    │
-│  │ Calendar API │  │ Reasoning    │  │ Priority Scorer  │    │
-│  │ GitHub API   │  │ Graph        │  │ Action Proposer  │    │
-│  │ File Watcher │  │ Planner      │  │ Scheduler        │    │
-│  └──────┬───────┘  └──────┬───────┘  └────────┬─────────┘    │
-│         │                 │                   │              │
-│         ▼                 ▼                   ▼              │
-│  ┌──────────────────────────────────────────────────────────┐│
-│  │                    MEMORY LAYER                          ││
-│  │  SQLite (structured) + ChromaDB (semantic) + Graph       ││
-│  └──────────────────────────────────────────────────────────┘│
-│  ┌──────────────────────────────────────────────────────────┐│
-│  │                  INTERFACE LAYER                         ││
-│  │  Telegram Bot │ CLI │ Desktop (Tauri) │ REST API         ││
-│  └──────────────────────────────────────────────────────────┘│
-│  ┌──────────────────────────────────────────────────────────┐│
-│  │                   LLM ROUTER                             ││
-│  │  DeepSeek (cheap) │ Claude (smart) │ Ollama (local)      ││
-│  └──────────────────────────────────────────────────────────┘│
-└──────────────────────────────────────────────────────────────┘
+Every other personal AI is a monolith. One team building one product. That doesn't scale.
+
+We build the **brain** — memory, reasoning, proactivity. Then we open a **Skill Protocol** so anyone can teach it new abilities.
+
+| Platform | Core | Extensions | Result |
+|----------|------|------------|--------|
+| VS Code | Editor | 50,000+ extensions | Killed every rival |
+| Obsidian | Markdown editor | 1,800+ plugins | Cult following |
+| **OmniBrain** | **AI Brain** | **Community Skills** | **The AI that becomes you** |
+
+### Built-in Skills
+
+| Skill | What It Does |
+|-------|-------------|
+| 📧 Email Manager | Gmail triage, drafts, smart replies |
+| 📅 Calendar Assistant | Events, meeting briefs, conflict detection |
+| 🌅 Morning Briefing | Daily summary with priorities |
+| 🧠 Memory Search | "What did [person] say about [topic]?" |
+| 🔍 Pattern Detector | Behavioral patterns + automation proposals |
+
+### Build Your Own Skill
+
+```yaml
+# skill.yaml
+name: spotify-tracker
+version: 1.0.0
+description: "Track your listening patterns"
+triggers:
+  - schedule: "every 1h"
+  - on_ask: "music|spotify|listening"
+permissions:
+  - read_memory
+  - write_memory
+  - notify
 ```
 
-Full technical deep-dive in [ARCHITECTURE.md](ARCHITECTURE.md).
+Full spec: [docs/SKILL-PROTOCOL.md](docs/SKILL-PROTOCOL.md)
 
 ---
 
-## Current Status
+## Architecture
 
-**OmniBrain is at Day 0.** The codebase currently contains [Omnigent](https://github.com/FrancescoStabile/omnigent) — the agent framework that powers OmniBrain's reasoning, planning, and tool execution. All of OmniBrain's domain-specific intelligence will be built on top of this foundation.
+```
+┌──────────────────────────────────────────────────────────┐
+│                    WEB UI (Next.js)                       │
+│    Chat  │  Proactive Feed  │  Skill Store  │  Settings  │
+└────────────────────────┬─────────────────────────────────┘
+                         │  REST + WebSocket
+┌────────────────────────┴─────────────────────────────────┐
+│                   API LAYER (FastAPI)                      │
+└────────────────────────┬─────────────────────────────────┘
+┌────────────────────────┴─────────────────────────────────┐
+│                     THE BRAIN (Python)                     │
+│                                                           │
+│  Agent Engine  │  Memory Layer  │  Proactive Engine       │
+│  (ReAct loop,  │  (SQLite FTS5, │  (Patterns, Scorer,    │
+│   Reasoning    │   Knowledge    │   Proposer, Briefings) │
+│   Graph)       │   Graph)       │                        │
+│                                                           │
+│  ┌─────────────────────────────────────────────────────┐ │
+│  │              SKILL RUNTIME                           │ │
+│  │  Loads Skills → Sandboxes → Routes triggers          │ │
+│  └─────────────────────────────────────────────────────┘ │
+│  ┌─────────────────────────────────────────────────────┐ │
+│  │              LLM ROUTER                              │ │
+│  │  DeepSeek ($0.14/M) │ Claude │ OpenAI │ Ollama      │ │
+│  └─────────────────────────────────────────────────────┘ │
+│  ┌─────────────────────────────────────────────────────┐ │
+│  │              APPROVAL GATE                           │ │
+│  │  Nothing sends without your OK. Ever.                │ │
+│  └─────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────┘
+```
 
-See the [Roadmap](docs/ROADMAP.md) for what's coming and when.
-
-### What's here now (Omnigent core):
-- ReAct agent loop with circuit breaker, loop detection, rate limiting
-- Multi-provider LLM routing (DeepSeek, Claude, OpenAI, Ollama)
-- Reasoning Graph for multi-step chain reasoning
-- Hierarchical task planner with phase-based execution
-- Smart context management with semantic compression
-- Domain Profile (structured agent memory)
-- Extractor, reflector, and error recovery pipelines
-- Plugin system with checksum verification
-- Session persistence with checkpoint/replay
-- Cost tracking per provider and task type
-- 325+ passing tests
-
-### What we're building:
-- [ ] OmniBrain daemon (systemd service)
-- [ ] Gmail + Google Calendar integration
-- [ ] Morning briefing engine
-- [ ] Telegram bot interface
-- [ ] Proactive engine (pattern detection, action proposals)
-- [ ] Semantic memory (ChromaDB)
-- [ ] CLI + REST API
-- [ ] Email drafting with approval flow
-- [ ] Pattern detection + automation proposals
-- [ ] Desktop app (Tauri)
-
----
-
-## Why Local-First?
-
-In 2026, "your data never leaves your computer" is not a feature — it's a requirement.
-
-- **Your data stays on your machine.** Period.
-- **No cloud.** No subscription to access your own memories.
-- **No telemetry.** Zero data collection, zero phone-home, zero analytics.
-- **You own everything.** Export, delete, migrate at any time.
-- **Open source.** Verify every line. Fork it. Extend it.
-
-OmniBrain uses cloud LLM APIs for reasoning, but you can switch entirely to local models (Ollama) for zero-cloud operation. Estimated cost with cloud APIs: **$0.50-$3/month**.
+Deep dive: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ---
 
 ## Quick Start
 
-OmniBrain is in early development. To follow along and contribute:
+### Self-hosted (free forever)
 
 ```bash
+# Clone & setup
 git clone https://github.com/FrancescoStabile/omnibrain.git
 cd omnibrain
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-pytest
+
+# Verify (983 tests should pass)
+pytest -x -q
+
+# Configure
+cp .env.example .env
+# Edit .env with your API keys (at least one LLM provider)
+
+# Start
+omnibrain start
+# Open http://localhost:8080
 ```
 
-Follow [@Francesco_Sta](https://x.com/Francesco_Sta) on X for daily build updates.
+### Configuration
+
+```bash
+# LLM Provider (at least one required)
+DEEPSEEK_API_KEY=sk-...          # Cheap ($0.50/mo average)
+ANTHROPIC_API_KEY=sk-ant-...     # Smart (for complex reasoning)
+OPENAI_API_KEY=sk-...            # Alternative
+
+# Google APIs (for Email + Calendar Skills)
+GOOGLE_CREDENTIALS_PATH=~/.omnibrain/credentials.json
+```
 
 ---
 
@@ -219,53 +168,84 @@ Follow [@Francesco_Sta](https://x.com/Francesco_Sta) on X for daily build update
 
 ```
 omnibrain/
-├── src/omnigent/           # Omnigent core (the brain)
-│   ├── agent.py            # ReAct loop, circuit breaker, loop detection
-│   ├── router.py           # Multi-provider LLM routing
-│   ├── reasoning_graph.py  # Directed graph for chain reasoning
-│   ├── planner.py          # Hierarchical task planning
-│   ├── context.py          # Smart context management
-│   ├── domain_profile.py   # Structured agent memory
-│   ├── state.py            # Agent state + Pydantic findings
-│   ├── registry.py         # DomainRegistry dataclass
-│   ├── extractors.py       # Tool result parsing pipeline
-│   ├── reflection.py       # Post-tool strategic analysis
-│   ├── error_recovery.py   # Pattern-matched recovery
-│   ├── chains.py           # Escalation chain registry
-│   ├── plugins.py          # Plugin system + checksums
-│   ├── session.py          # Session persistence + checkpoints
-│   ├── cost_tracker.py     # Cost tracking
-│   └── tools/              # Tool registry
-├── tests/                  # 325+ tests
-├── docs/                   # Documentation & roadmap
-├── manifesto.md            # The definitive vision document
-├── ARCHITECTURE.md         # Technical architecture
-├── CONTRIBUTING.md         # How to contribute
-└── CHANGELOG.md            # Version history
+├── manifesto.md                 # The Bible — single source of truth
+├── docs/                        # Full documentation (14 docs)
+│
+├── src/omnigent/                # Agent framework (the brain's brain)
+│   ├── agent.py                 # ReAct loop (1025 lines)
+│   ├── router.py                # Multi-provider LLM router
+│   ├── reasoning_graph.py       # Directed reasoning graph
+│   ├── planner.py               # Hierarchical planner
+│   ├── plugins.py               # Plugin system → base for Skill Protocol
+│   └── ...                      # Context, session, cost tracking, etc.
+│
+├── src/omnibrain/               # Platform application
+│   ├── daemon.py                # Main process orchestrator
+│   ├── memory.py                # SQLite FTS5 + ChromaDB memory
+│   ├── knowledge_graph.py       # Entity-relationship queries
+│   ├── briefing.py              # Morning/evening/weekly briefings
+│   ├── approval.py              # 3-level approval gate
+│   ├── prompt_injection.py      # 16+ pattern injection defense
+│   ├── proactive/               # Engine, patterns, scorer
+│   ├── integrations/            # Gmail, Calendar → become Skills
+│   ├── interfaces/              # API server, Telegram bot
+│   └── tools/                   # Email, calendar, memory tools
+│
+├── skills/                      # Built-in Skills (Skill Protocol)
+├── web/                         # Web UI (Next.js + shadcn/ui)
+├── scripts/                     # Install, systemd, Google setup
+└── tests/                       # 983 passing tests
 ```
+
+---
+
+## Status
+
+**983 tests passing.** Core engine, memory, knowledge graph, proactive engine, briefings, approval, Gmail, Calendar — all built and tested.
+
+Building: Skill Protocol runtime, Web UI, marketplace, and the 30-second onboarding experience.
+
+Follow the build: [@Francesco_Sta on X](https://x.com/Francesco_Sta)
 
 ---
 
 ## Contributing
 
-OmniBrain is MIT-licensed. We welcome contributions of all kinds. See [CONTRIBUTING.md](CONTRIBUTING.md).
+We welcome contributions of all kinds — especially **Skills**. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+**Ways to contribute:**
+- 🔧 Build a Skill (the highest-impact contribution)
+- 🐛 Report bugs / fix issues
+- 🎨 Improve the Web UI
+- 📝 Write documentation
+- 🧪 Add tests
 
 ---
 
-## Links
+## Documentation
 
-- **[Manifesto](manifesto.md)** — The complete vision, every schema, every decision
-- **[Architecture](ARCHITECTURE.md)** — Technical deep-dive into OmniBrain + Omnigent
-- **[Roadmap](docs/ROADMAP.md)** — Day-by-day build plan
-- **[Omnigent](https://github.com/FrancescoStabile/omnigent)** — The agent framework powering OmniBrain
-- **[X/Twitter](https://x.com/Francesco_Sta)** — Daily build-in-public updates
+| Document | Description |
+|----------|-------------|
+| [Manifesto](manifesto.md) | The single source of truth |
+| [Vision](docs/VISION.md) | Why this exists, who it's for |
+| [Architecture](docs/ARCHITECTURE.md) | System design, tech decisions |
+| [Skill Protocol](docs/SKILL-PROTOCOL.md) | Build a Skill in 30 minutes |
+| [API Spec](docs/API-SPEC.md) | Every endpoint |
+| [UX Bible](docs/UX-BIBLE.md) | Design system |
+| [All docs →](docs/INDEX.md) | Full documentation index |
+
+---
+
+## License
+
+MIT — free for everyone, forever. See [LICENSE](LICENSE).
 
 ---
 
 <div align="center">
 
-**OmniBrain: The AI that never sleeps.**
+**OmniBrain: The AI that becomes you.**
 
-Built by [Francesco Stabile](https://x.com/Francesco_Sta)
+Built by [Francesco Stabile](https://x.com/Francesco_Sta) + [Claude Opus 4.6](https://anthropic.com)
 
 </div>

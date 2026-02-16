@@ -1,0 +1,31 @@
+[Unit]
+Description=OmniBrain — The AI that never sleeps
+Documentation=https://github.com/FrancescoStabile/omnibrain
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/omnibrain start
+Restart=on-failure
+RestartSec=10
+WatchdogSec=120
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-%h/.omnibrain/.env
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.omnibrain
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=omnibrain
+
+[Install]
+WantedBy=default.target

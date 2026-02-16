@@ -1,0 +1,40 @@
+name: calendar-assistant
+version: 1.0.0
+description: "Calendar management — events, meeting briefs, conflict detection, countdowns"
+author: omnibrain
+homepage: https://github.com/omnibrain/omnibrain
+icon: "📅"
+category: productivity
+
+triggers:
+  - schedule: "every 15m"
+  - on_ask: "(?i)(calendar|meeting|event|schedule|appointment|busy|free|conflict|today|tomorrow)"
+  - on_event: "event_approaching"
+
+permissions:
+  - read_memory
+  - write_memory
+  - notify
+  - llm_access
+  - read_calendar
+
+settings:
+  sync_interval:
+    type: integer
+    default: 15
+    description: "Minutes between calendar syncs"
+  meeting_brief_minutes_before:
+    type: integer
+    default: 30
+    description: "Minutes before meeting to prepare brief"
+  detect_conflicts:
+    type: boolean
+    default: true
+    description: "Automatically detect scheduling conflicts"
+
+handlers:
+  schedule: "handlers/poll.py"
+  on_ask: "handlers/ask.py"
+  on_event: "handlers/event.py"
+
+requires_core: ">=0.1.0"

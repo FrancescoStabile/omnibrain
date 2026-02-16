@@ -1,7 +1,7 @@
 """Omnigent — Universal Autonomous Agent Framework.
 
-Extracted from NumaSec v3.2.1 architecture. Domain-agnostic scaffold
-for building specialized AI agents with:
+The brain powering OmniBrain. Domain-agnostic scaffold for building
+specialized AI agents with:
 
 - ReAct loop with streaming events
 - Multi-provider LLM routing (DeepSeek, Claude, OpenAI, Ollama)
@@ -9,7 +9,7 @@ for building specialized AI agents with:
 - Hierarchical task planner with LLM refinement
 - Smart context window management
 - Pattern-matched error recovery
-- Plugin system for extensibility
+- Plugin system (foundation for Skill Protocol)
 - MCP protocol integration
 - Session persistence
 - Cost tracking

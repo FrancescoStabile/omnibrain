@@ -1,0 +1,606 @@
+"""
+OmniBrain — Morning Briefing Engine
+
+Generates comprehensive morning briefings by pulling together all
+available data: emails, calendar events, pending proposals, observations.
+
+The briefing follows the manifesto's "Magic Moment #1" format:
+    1. Overnight email summary (count, urgent, drafts ready)
+    2. Today's calendar (meetings, conflicts, prep needed)
+    3. Pending proposals (actions waiting for approval)
+    4. Top priorities (AI-generated based on urgency + deadline)
+    5. Patterns detected overnight
+
+This can be called:
+    - Automatically at scheduled time (via proactive engine)
+    - On demand via CLI: `omnibrain briefing`
+    - Via API: GET /api/v1/briefing
+    - Via Telegram: /briefing
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any
+
+from omnibrain.models import Briefing, BriefingType
+
+logger = logging.getLogger("omnibrain.briefing")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Briefing Data Sections
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class EmailSection:
+    """Email summary for the briefing."""
+    total: int = 0
+    unread: int = 0
+    urgent: int = 0
+    needs_response: int = 0
+    drafts_ready: int = 0
+    top_senders: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "total": self.total,
+            "unread": self.unread,
+            "urgent": self.urgent,
+            "needs_response": self.needs_response,
+            "drafts_ready": self.drafts_ready,
+            "top_senders": self.top_senders,
+        }
+
+
+@dataclass
+class CalendarSection:
+    """Calendar summary for the briefing."""
+    total_events: int = 0
+    total_hours: float = 0.0
+    next_meeting: str = ""
+    next_meeting_time: str = ""
+    events: list[dict[str, Any]] = field(default_factory=list)
+    conflicts: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "total_events": self.total_events,
+            "total_hours": self.total_hours,
+            "next_meeting": self.next_meeting,
+            "next_meeting_time": self.next_meeting_time,
+            "events": self.events,
+            "conflicts": self.conflicts,
+        }
+
+
+@dataclass
+class ProposalSection:
+    """Pending proposals for the briefing."""
+    total_pending: int = 0
+    by_type: dict[str, int] = field(default_factory=dict)
+    high_priority: list[dict[str, Any]] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "total_pending": self.total_pending,
+            "by_type": self.by_type,
+            "high_priority": self.high_priority,
+        }
+
+
+@dataclass
+class PriorityItem:
+    """A priority item for today."""
+    rank: int
+    title: str
+    reason: str
+    source: str = ""  # "email", "calendar", "proposal"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "rank": self.rank,
+            "title": self.title,
+            "reason": self.reason,
+            "source": self.source,
+        }
+
+
+@dataclass
+class BriefingData:
+    """Complete data for generating a briefing."""
+    date: str = ""
+    briefing_type: str = BriefingType.MORNING.value
+    emails: EmailSection = field(default_factory=EmailSection)
+    calendar: CalendarSection = field(default_factory=CalendarSection)
+    proposals: ProposalSection = field(default_factory=ProposalSection)
+    priorities: list[PriorityItem] = field(default_factory=list)
+    observations: list[str] = field(default_factory=list)
+    memory_highlights: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "date": self.date,
+            "briefing_type": self.briefing_type,
+            "emails": self.emails.to_dict(),
+            "calendar": self.calendar.to_dict(),
+            "proposals": self.proposals.to_dict(),
+            "priorities": [p.to_dict() for p in self.priorities],
+            "observations": self.observations,
+            "memory_highlights": self.memory_highlights,
+        }
+
+    @property
+    def events_processed(self) -> int:
+        return self.emails.total + self.calendar.total_events
+
+    @property
+    def actions_proposed(self) -> int:
+        return self.proposals.total_pending
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Briefing Generator
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class BriefingGenerator:
+    """Generates morning/evening/weekly briefings.
+
+    Pulls data from the database and memory system, assembles sections,
+    formats into human-readable output.
+
+    Usage:
+        gen = BriefingGenerator(db, memory_manager)
+        data = gen.collect_data(briefing_type="morning")
+        text = gen.format_text(data)
+        gen.store(data, text)
+    """
+
+    def __init__(self, db: Any, memory_manager: Any = None):
+        """
+        Args:
+            db: OmniBrainDB instance.
+            memory_manager: Optional MemoryManager for memory highlights.
+        """
+        self._db = db
+        self._memory = memory_manager
+
+    def generate(self, briefing_type: str = "morning") -> tuple[BriefingData, str]:
+        """Generate a complete briefing. Returns (data, formatted_text)."""
+        data = self.collect_data(briefing_type)
+        text = self.format_text(data)
+        return data, text
+
+    def generate_and_store(self, briefing_type: str = "morning") -> tuple[BriefingData, str, int]:
+        """Generate a briefing and store it in the DB.
+
+        Returns:
+            Tuple of (data, formatted_text, briefing_id).
+        """
+        data, text = self.generate(briefing_type)
+        briefing_id = self.store(data, text)
+        return data, text, briefing_id
+
+    def collect_data(self, briefing_type: str = "morning") -> BriefingData:
+        """Collect all data for a briefing.
+
+        Queries the database for emails, events, proposals, observations.
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+        data = BriefingData(date=today, briefing_type=briefing_type)
+
+        # Emails
+        data.emails = self._collect_emails()
+
+        # Calendar
+        data.calendar = self._collect_calendar()
+
+        # Proposals
+        data.proposals = self._collect_proposals()
+
+        # Observations
+        data.observations = self._collect_observations()
+
+        # Memory highlights
+        if self._memory:
+            data.memory_highlights = self._collect_memory_highlights()
+
+        # Generate priorities from collected data
+        data.priorities = self._generate_priorities(data)
+
+        logger.info(
+            f"Briefing data collected: {data.emails.total} emails, "
+            f"{data.calendar.total_events} events, "
+            f"{data.proposals.total_pending} proposals, "
+            f"{len(data.priorities)} priorities"
+        )
+
+        return data
+
+    def format_text(self, data: BriefingData) -> str:
+        """Format briefing data into human-readable text.
+
+        Produces Markdown suitable for Telegram, CLI, and API.
+        """
+        lines = []
+        today = data.date or datetime.now().strftime("%Y-%m-%d")
+
+        title = {
+            "morning": "🔔 Morning Briefing",
+            "evening": "🌙 Evening Summary",
+            "weekly": "📊 Weekly Review",
+        }.get(data.briefing_type, "📋 Briefing")
+
+        lines.append(f"**{title} — {today}**\n")
+
+        # ── Email Section ──
+        if data.emails.total > 0:
+            lines.append("**📧 Email Overview**")
+            lines.append(
+                f"• {data.emails.total} emails received"
+                f" → {data.emails.unread} unread"
+            )
+            if data.emails.urgent:
+                lines.append(f"• ⚠️ {data.emails.urgent} urgent — require attention")
+            if data.emails.needs_response:
+                lines.append(f"• {data.emails.needs_response} need your response")
+            if data.emails.drafts_ready:
+                lines.append(f"• ✏️ {data.emails.drafts_ready} draft responses ready")
+            if data.emails.top_senders:
+                lines.append(f"• Top senders: {', '.join(data.emails.top_senders[:3])}")
+            lines.append("")
+
+        # ── Calendar Section ──
+        if data.calendar.total_events > 0:
+            lines.append("**📅 Today's Calendar**")
+            lines.append(
+                f"• {data.calendar.total_events} events"
+                f" ({data.calendar.total_hours:.1f}h of meetings)"
+            )
+            if data.calendar.next_meeting:
+                lines.append(
+                    f"• Next: {data.calendar.next_meeting}"
+                    f" at {data.calendar.next_meeting_time}"
+                )
+            for event in data.calendar.events[:5]:
+                time_str = event.get("time", "")
+                title = event.get("title", "")
+                attendees = event.get("attendees", 0)
+                lines.append(f"  - {time_str} {title} ({attendees} attendees)")
+            if data.calendar.conflicts:
+                for conflict in data.calendar.conflicts:
+                    lines.append(f"  ⚠️ Conflict: {conflict}")
+            lines.append("")
+
+        # ── Proposals Section ──
+        if data.proposals.total_pending > 0:
+            lines.append("**🎯 Pending Actions**")
+            lines.append(f"• {data.proposals.total_pending} actions waiting for approval")
+            for item in data.proposals.high_priority[:3]:
+                lines.append(f"  - [{item.get('type', '')}] {item.get('title', '')}")
+            lines.append("")
+
+        # ── Priorities ──
+        if data.priorities:
+            lines.append("**🏆 Top Priorities Today**")
+            for p in data.priorities[:5]:
+                lines.append(f"{p.rank}. {p.title}")
+                if p.reason:
+                    lines.append(f"   _{p.reason}_")
+            lines.append("")
+
+        # ── Observations ──
+        if data.observations:
+            lines.append("**💡 Patterns Detected**")
+            for obs in data.observations[:3]:
+                lines.append(f"• {obs}")
+            lines.append("")
+
+        # ── Memory Highlights ──
+        if data.memory_highlights:
+            lines.append("**🧠 Memory Notes**")
+            for hl in data.memory_highlights[:3]:
+                lines.append(f"• {hl}")
+            lines.append("")
+
+        # ── Footer ──
+        if not any([
+            data.emails.total, data.calendar.total_events,
+            data.proposals.total_pending, data.priorities,
+        ]):
+            lines.append("_All quiet today! No events, emails, or pending actions._")
+
+        return "\n".join(lines).strip()
+
+    def store(self, data: BriefingData, text: str) -> int:
+        """Store the briefing in the database.
+
+        Returns:
+            The briefing ID.
+        """
+        briefing = Briefing(
+            date=data.date or datetime.now().strftime("%Y-%m-%d"),
+            type=data.briefing_type,
+            content=text,
+            events_processed=data.events_processed,
+            actions_proposed=data.actions_proposed,
+        )
+        briefing_id = self._db.insert_briefing(briefing)
+        logger.info(f"Stored {data.briefing_type} briefing: id={briefing_id}")
+        return briefing_id
+
+    # ── Data Collection Helpers ──
+
+    def _collect_emails(self) -> EmailSection:
+        """Collect email data from DB."""
+        section = EmailSection()
+
+        try:
+            stats = self._db.get_stats()
+            section.total = stats.get("events_email", 0)
+
+            # Query today's emails from events table
+            events = self._db.get_events(source="gmail", limit=50)
+
+            if events:
+                section.total = len(events)
+                section.unread = sum(
+                    1 for e in events
+                    if not _meta_flag(e, "is_read")
+                )
+
+                # Count urgent via metadata
+                section.urgent = sum(
+                    1 for e in events
+                    if _meta_str(e, "urgency") in ("critical", "high")
+                )
+
+                # Top senders
+                senders: dict[str, int] = {}
+                for e in events:
+                    sender = _meta_str(e, "sender_email") or e.get("title", "")
+                    if sender:
+                        senders[sender] = senders.get(sender, 0) + 1
+                section.top_senders = sorted(senders, key=senders.get, reverse=True)[:5]
+
+            # Drafts ready = proposals of type email_draft with pending status
+            pending_proposals = self._db.get_pending_proposals()
+            section.drafts_ready = sum(
+                1 for p in pending_proposals
+                if p.get("type") == "email_draft"
+            )
+            section.needs_response = section.urgent + section.drafts_ready
+
+        except Exception as e:
+            logger.warning(f"Failed to collect email data: {e}")
+
+        return section
+
+    def _collect_calendar(self) -> CalendarSection:
+        """Collect calendar data from DB."""
+        section = CalendarSection()
+
+        try:
+            events = self._db.get_events(source="calendar", limit=30)
+
+            if events:
+                section.total_events = len(events)
+
+                total_minutes = 0
+                now = datetime.now()
+                next_meeting_time = None
+                event_items = []
+
+                for e in events:
+                    duration = _meta_int(e, "duration_minutes")
+                    total_minutes += duration
+
+                    start_str = _meta_str(e, "start_time") or e.get("timestamp", "")
+                    attendees = _meta_list(e, "attendees")
+                    time_display = start_str[11:16] if len(start_str) >= 16 else ""
+
+                    event_items.append({
+                        "title": e.get("title", ""),
+                        "time": time_display,
+                        "attendees": len(attendees),
+                        "duration": duration,
+                    })
+
+                    # Find next meeting
+                    if start_str:
+                        try:
+                            start_dt = datetime.fromisoformat(start_str)
+                            if start_dt > now:
+                                if next_meeting_time is None or start_dt < next_meeting_time:
+                                    next_meeting_time = start_dt
+                                    section.next_meeting = e.get("title", "")
+                                    section.next_meeting_time = time_display
+                        except (ValueError, TypeError):
+                            pass
+
+                section.total_hours = round(total_minutes / 60, 1)
+                section.events = event_items
+
+                # Detect conflicts (overlapping events)
+                section.conflicts = _detect_conflicts(events)
+
+        except Exception as e:
+            logger.warning(f"Failed to collect calendar data: {e}")
+
+        return section
+
+    def _collect_proposals(self) -> ProposalSection:
+        """Collect pending proposals from DB."""
+        section = ProposalSection()
+
+        try:
+            pending = self._db.get_pending_proposals()
+            section.total_pending = len(pending)
+
+            for p in pending:
+                ptype = p.get("type", "other")
+                section.by_type[ptype] = section.by_type.get(ptype, 0) + 1
+                if p.get("priority", 2) >= 3:
+                    section.high_priority.append({
+                        "type": ptype,
+                        "title": p.get("title", ""),
+                        "priority": p.get("priority", 2),
+                    })
+
+        except Exception as e:
+            logger.warning(f"Failed to collect proposals: {e}")
+
+        return section
+
+    def _collect_observations(self) -> list[str]:
+        """Collect recent observations."""
+        try:
+            observations = self._db.get_observations(days=30)
+            return [
+                f"{obs.get('pattern_type', '')}: {obs.get('description', '')}"
+                for obs in observations
+            ]
+        except Exception as e:
+            logger.warning(f"Failed to collect observations: {e}")
+            return []
+
+    def _collect_memory_highlights(self) -> list[str]:
+        """Get relevant memory highlights for the briefing."""
+        if not self._memory:
+            return []
+
+        try:
+            recent = self._memory.get_recent(max_results=5, source_filter="observation")
+            return [doc.text for doc in recent if doc.text]
+        except Exception as e:
+            logger.warning(f"Failed to collect memory highlights: {e}")
+            return []
+
+    def _generate_priorities(self, data: BriefingData) -> list[PriorityItem]:
+        """Generate AI-style priority list from collected data.
+
+        Uses simple heuristics (not LLM) for now.
+        Phase 2: Use the Agent with a plan_template to generate priorities.
+        """
+        priorities: list[PriorityItem] = []
+        rank = 1
+
+        # Urgent emails first
+        if data.emails.urgent > 0:
+            priorities.append(PriorityItem(
+                rank=rank,
+                title=f"Respond to {data.emails.urgent} urgent email(s)",
+                reason="High urgency — time-sensitive",
+                source="email",
+            ))
+            rank += 1
+
+        # Next meeting prep
+        if data.calendar.next_meeting:
+            priorities.append(PriorityItem(
+                rank=rank,
+                title=f"Prepare for: {data.calendar.next_meeting}",
+                reason=f"Scheduled at {data.calendar.next_meeting_time}",
+                source="calendar",
+            ))
+            rank += 1
+
+        # High-priority proposals
+        for p in data.proposals.high_priority[:2]:
+            priorities.append(PriorityItem(
+                rank=rank,
+                title=p.get("title", "Review proposal"),
+                reason="Action required — high priority",
+                source="proposal",
+            ))
+            rank += 1
+
+        # Draft emails
+        if data.emails.drafts_ready:
+            priorities.append(PriorityItem(
+                rank=rank,
+                title=f"Review {data.emails.drafts_ready} draft response(s)",
+                reason="Draft responses ready for approval",
+                source="email",
+            ))
+            rank += 1
+
+        return priorities[:5]  # Max 5 priorities
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Helpers
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _meta_str(event: dict, key: str) -> str:
+    """Get a string from event metadata."""
+    meta = event.get("metadata")
+    if isinstance(meta, str):
+        import json
+        try:
+            meta = json.loads(meta)
+        except (ValueError, TypeError):
+            return ""
+    if isinstance(meta, dict):
+        return str(meta.get(key, ""))
+    return ""
+
+
+def _meta_int(event: dict, key: str) -> int:
+    """Get an int from event metadata."""
+    val = _meta_str(event, key)
+    try:
+        return int(val) if val else 0
+    except (ValueError, TypeError):
+        return 0
+
+
+def _meta_flag(event: dict, key: str) -> bool:
+    """Get a bool from event metadata."""
+    val = _meta_str(event, key)
+    return val.lower() in ("true", "1", "yes") if val else False
+
+
+def _meta_list(event: dict, key: str) -> list[str]:
+    """Get a list from event metadata."""
+    import json
+    val = _meta_str(event, key)
+    if not val:
+        return []
+    try:
+        parsed = json.loads(val)
+        return parsed if isinstance(parsed, list) else []
+    except (ValueError, TypeError):
+        return [val] if val else []
+
+
+def _detect_conflicts(events: list[dict]) -> list[str]:
+    """Detect overlapping calendar events."""
+    conflicts = []
+    parsed = []
+
+    for e in events:
+        start = _meta_str(e, "start_time")
+        end = _meta_str(e, "end_time")
+        if start and end:
+            try:
+                parsed.append({
+                    "title": e.get("title", ""),
+                    "start": datetime.fromisoformat(start),
+                    "end": datetime.fromisoformat(end),
+                })
+            except (ValueError, TypeError):
+                pass
+
+    # Check for overlaps
+    for i, a in enumerate(parsed):
+        for b in parsed[i + 1:]:
+            if a["start"] < b["end"] and b["start"] < a["end"]:
+                conflicts.append(f"{a['title']} ↔ {b['title']}")
+
+    return conflicts

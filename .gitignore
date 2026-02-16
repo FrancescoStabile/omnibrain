@@ -39,9 +39,27 @@ htmlcov/
 # Omnigent runtime
 .omnigent/
 
+# OmniBrain runtime
+.omnibrain/
+
+# Google OAuth tokens (sensitive!)
+token.json
+credentials.json
+
 # OS
 Thumbs.db
 
+# Linters / Formatters
+.ruff_cache/
+
+# Next.js build output
+.next/
+web/.next/
+web/next-env.d.ts
+web/tsconfig.tsbuildinfo
+
+# Private files (not for public repo)
 manifesto.md
 docs/
 CLAUDE.md
+web/node_modules/

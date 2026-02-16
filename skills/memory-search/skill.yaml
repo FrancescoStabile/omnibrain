@@ -1,0 +1,19 @@
+name: memory-search
+version: 1.0.0
+description: "Search your personal memory — who said what, topic correlation, contact graphs"
+author: omnibrain
+homepage: https://github.com/omnibrain/omnibrain
+icon: 🧠
+category: productivity
+
+triggers:
+  - on_ask: "(?i)remember|said|about|when did|who|history|search memory|find in memory"
+
+permissions:
+  - read_memory
+  - llm_access
+
+handlers:
+  on_ask: "handlers/ask.py"
+
+requires_core: ">=0.1.0"

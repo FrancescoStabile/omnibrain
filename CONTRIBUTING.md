@@ -1,95 +1,87 @@
 # Contributing to OmniBrain
 
-OmniBrain is built in public by [Francesco Stabile](https://x.com/Francesco_Sta) and Claude Opus 4.6. We welcome contributions from anyone who shares the vision of a local-first, proactive, open-source personal AI.
+OmniBrain is built in public by [Francesco Stabile](https://x.com/Francesco_Sta) and Claude Opus 4.6. We welcome contributions from anyone who shares the vision of an open-source personal AI platform.
 
 ## Ways to Contribute
 
-- **Bug reports** — Open an issue with a minimal reproduction
-- **Feature requests** — Describe the use case, not just the solution
-- **Code** — Fix bugs, improve performance, add tests, implement features from the [Roadmap](docs/ROADMAP.md)
-- **Documentation** — Fix typos, clarify concepts, add examples
-- **Integrations** — Build new data source connectors or interface channels
-- **Testing** — Use OmniBrain daily and report your real experience
+| Impact | Contribution |
+|--------|-------------|
+| 🔧 **Highest** | Build a Skill — see [Skill Protocol](docs/SKILL-PROTOCOL.md) |
+| 🎨 **High** | Improve the Web UI (`web/`) |
+| 🐛 **High** | Fix bugs, improve stability |
+| 🧪 **Medium** | Add tests (currently 983 passing) |
+| 📝 **Medium** | Improve documentation |
+| 💡 **Any** | Feature requests + bug reports |
 
 ## Development Setup
 
 ```bash
-# Clone the repo
 git clone https://github.com/FrancescoStabile/omnibrain.git
 cd omnibrain
 
-# Create virtual environment
+# Python backend
 python -m venv .venv
 source .venv/bin/activate
-
-# Install in development mode with dev dependencies
 pip install -e ".[dev]"
+pytest -x -q  # 983 tests should pass
 
-# Run tests
-pytest
-
-# Run linter
-ruff check src/
+# Web UI (requires Node.js 20+)
+cd web
+npm install
+npm run dev
 ```
 
 ## Code Style
 
-- **Python 3.11+** with type hints everywhere
-- **Ruff** for linting (config in pyproject.toml)
+### Python
+- **Python 3.11+** with type hints on all function signatures
+- **Ruff** for linting (config in `pyproject.toml`)
+- **Black** formatting (line length 88)
 - Docstrings on all public classes and functions
-- Tests for all new functionality
+- Async for all I/O-bound functions
 
-## Architecture Guidelines
+### TypeScript (Web UI)
+- ESLint + Prettier
+- Strict TypeScript — no `any`
+- Functional components with hooks
+- Tailwind CSS utility classes
 
-Before contributing, read [ARCHITECTURE.md](ARCHITECTURE.md) and the [Manifesto](manifesto.md).
+## Architecture Rules
 
-**Key principles:**
+1. **Omnigent stays domain-agnostic.** No OmniBrain-specific logic in `src/omnigent/`. Extend via registries and subclass hooks.
+2. **Local-first always.** Every feature must work without cloud services. Ollama is always an alternative.
+3. **Never act without approval.** Anything that sends data externally MUST go through the approval gate. No exceptions.
+4. **Never crash.** All extension points wrap execution in try/except. A Gmail API error must never stop the daemon.
+5. **No telemetry.** Zero data collection, zero phone-home.
 
-1. **Omnigent core stays domain-agnostic.** No OmniBrain-specific logic in `src/omnigent/`. All personal AI behavior goes through registries, subclass hooks, or dedicated `src/omnibrain/` modules.
+## Building a Skill
 
-2. **Local-first always.** Every feature must work without cloud services. Cloud LLMs are optional — Ollama must always be an alternative.
+The highest-impact contribution is a Skill. Start here:
 
-3. **Never act without approval.** Any feature that sends data externally (email, message, API call) MUST go through the approval gate. No exceptions.
-
-4. **Never crash.** All extension points (extractors, reflectors, integrations) must catch exceptions. A Gmail API error must never stop the daemon.
-
-5. **Privacy by default.** No telemetry, no analytics, no data collection. User data never leaves the machine unless the user explicitly approves an action.
+1. Read [docs/SKILL-PROTOCOL.md](docs/SKILL-PROTOCOL.md)
+2. Fork the [skill template](https://github.com/omnibrain/skill-template) (coming soon)
+3. Build your Skill (30 minutes for a simple one)
+4. Test with `omnibrain-skill test`
+5. Submit to the Skill registry
 
 ## Pull Request Process
 
-1. Fork the repo and create a feature branch from `main`
+1. Fork and branch from `main`
 2. Write tests for your changes
-3. Ensure all tests pass: `pytest`
+3. Ensure all tests pass: `pytest -x -q`
 4. Ensure linting passes: `ruff check src/`
-5. Update documentation if needed
-6. Submit a PR with a clear description of **what** and **why**
+5. Submit PR with a clear description of **what** and **why**
 
-## What to Work On
+## Commit Messages
 
-Check the [Roadmap](docs/ROADMAP.md) for current priorities. Issues labeled `good first issue` are a great starting point.
+```
+feat: add Spotify Skill with listening patterns
+fix: correct timezone handling in briefing scheduler
+docs: update Skill Protocol examples
+test: add calendar conflict detection tests
+```
 
-**High-impact areas:**
-- Integration connectors (Gmail, Calendar, GitHub)
-- Telegram bot features
-- CLI commands
-- Test coverage
-- Documentation and examples
-
-## Legal Notes
-
-### EU AI Act Compliance
-OmniBrain must comply with the EU AI Act. Key rules:
-- AI-generated content must be clearly labeled
-- OmniBrain must identify itself as AI in all communications
-- No impersonation of the user
-- No emotional manipulation claims
-
-### Privacy
-- All data stays local by default
-- User can delete all data with one command
-- User can export all data (JSON/CSV)
-
-## Reporting Security Issues
+## Security
 
 If you find a security vulnerability, **do not** open a public issue. Email the maintainer directly.
 

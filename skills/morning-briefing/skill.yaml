@@ -1,0 +1,33 @@
+name: morning-briefing
+version: 1.0.0
+description: "Daily morning and evening briefings with personalized summaries"
+author: omnibrain
+homepage: https://github.com/omnibrain/omnibrain
+icon: 🌅
+category: productivity
+
+triggers:
+  - schedule: "cron 0 7 * * *"
+  - on_ask: "(?i)briefing|morning|summary|overnight|what happened|today"
+
+permissions:
+  - read_memory
+  - write_memory
+  - notify
+  - llm_access
+
+settings:
+  morning_time:
+    type: string
+    default: "07:00"
+    description: "Time to generate morning briefing (HH:MM)"
+  evening_time:
+    type: string
+    default: "22:00"
+    description: "Time to generate evening briefing (HH:MM)"
+
+handlers:
+  schedule: "handlers/poll.py"
+  on_ask: "handlers/ask.py"
+
+requires_core: ">=0.1.0"

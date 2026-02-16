@@ -1,0 +1,33 @@
+name: pattern-detector
+version: 1.0.0
+description: "Detect behavioral patterns and propose automations"
+author: omnibrain
+homepage: https://github.com/omnibrain/omnibrain
+icon: 🔍
+category: productivity
+
+triggers:
+  - schedule: "every 6h"
+  - on_ask: "(?i)pattern|habit|trend|automation|routine"
+
+permissions:
+  - read_memory
+  - write_memory
+  - notify
+  - llm_access
+
+settings:
+  min_occurrences:
+    type: integer
+    default: 3
+    description: "Minimum repetitions to consider a pattern"
+  detection_window_days:
+    type: integer
+    default: 30
+    description: "Days to look back for patterns"
+
+handlers:
+  schedule: "handlers/poll.py"
+  on_ask: "handlers/ask.py"
+
+requires_core: ">=0.1.0"

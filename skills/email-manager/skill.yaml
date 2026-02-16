@@ -1,0 +1,40 @@
+name: email-manager
+version: 1.0.0
+description: "Smart email management — triage, drafts, replies, and unanswered detection"
+author: omnibrain
+homepage: https://github.com/omnibrain/omnibrain
+icon: "📧"
+category: communication
+
+triggers:
+  - schedule: "every 5m"
+  - on_ask: "(?i)(email|inbox|mail|unread|message from|who (wrote|emailed|sent)|reply|draft)"
+  - on_event: "new_email"
+
+permissions:
+  - read_memory
+  - write_memory
+  - notify
+  - llm_access
+  - google_gmail
+
+settings:
+  check_interval:
+    type: integer
+    default: 5
+    description: "Minutes between email checks"
+  max_fetch:
+    type: integer
+    default: 20
+    description: "Max emails to fetch per poll"
+  auto_triage:
+    type: boolean
+    default: true
+    description: "Automatically classify incoming emails"
+
+handlers:
+  schedule: "handlers/poll.py"
+  on_ask: "handlers/ask.py"
+  on_event: "handlers/event.py"
+
+requires_core: ">=0.1.0"

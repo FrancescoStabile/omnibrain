@@ -1,0 +1,119 @@
+/**
+ * AppShell — root layout with sidebar + main area.
+ * Renders the active view based on store state.
+ * Shows Onboarding flow for first-time users.
+ */
+
+"use client";
+
+import { useEffect, useState } from "react";
+import { Sidebar } from "./sidebar";
+import { TopBar } from "./top-bar";
+import { HomePage } from "@/components/views/home";
+import { BriefingPage } from "@/components/views/briefing";
+import { ChatPage } from "@/components/views/chat";
+import { SkillsPage } from "@/components/views/skills";
+import { SettingsPage } from "@/components/views/settings";
+import { OnboardingPage } from "@/components/views/onboarding";
+import { api } from "@/lib/api";
+import { useStore } from "@/lib/store";
+import { ToastProvider } from "@/components/ui/toast";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+
+const views: Record<string, React.FC> = {
+  home: HomePage,
+  briefing: BriefingPage,
+  chat: ChatPage,
+  skills: SkillsPage,
+  settings: SettingsPage,
+  onboarding: OnboardingPage,
+};
+
+export function AppShell() {
+  const view = useStore((s) => s.view);
+  const setView = useStore((s) => s.setView);
+  const onboardingComplete = useStore((s) => s.onboardingComplete);
+  const setOnboardingComplete = useStore((s) => s.setOnboardingComplete);
+  const setGoogleConnected = useStore((s) => s.setGoogleConnected);
+  const setOnboardingStep = useStore((s) => s.setOnboardingStep);
+  const [ready, setReady] = useState(false);
+
+  // Apply persisted theme on first render
+  useEffect(() => {
+    const theme = useStore.getState().theme;
+    document.documentElement.setAttribute("data-theme", theme);
+  }, []);
+
+  // On mount: check OAuth status to decide whether to show onboarding
+  useEffect(() => {
+    // Check URL for OAuth callback
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("oauth") === "success") {
+      setGoogleConnected(true);
+      setOnboardingStep("analyzing");
+      setView("onboarding");
+      setReady(true);
+      return;
+    }
+
+    // Check backend for Google connection
+    api
+      .getOAuthStatus()
+      .then((status) => {
+        if (status.connected) {
+          setGoogleConnected(true);
+          setOnboardingComplete(true);
+        } else {
+          // First time: show onboarding
+          setView("onboarding");
+        }
+      })
+      .catch(() => {
+        // Backend unreachable — skip onboarding, show home
+        setOnboardingComplete(true);
+      })
+      .finally(() => setReady(true));
+  }, [setView, setOnboardingComplete, setGoogleConnected, setOnboardingStep]);
+
+  if (!ready) {
+    // Brief loading — prevents flash of wrong view
+    return (
+      <div className="flex h-screen items-center justify-center bg-[var(--bg-primary)]">
+        <div className="w-8 h-8 rounded-full border-2 border-[var(--brand-primary)] border-t-transparent animate-spin" />
+      </div>
+    );
+  }
+
+  // Onboarding: full-screen, no sidebar
+  if (view === "onboarding" && !onboardingComplete) {
+    return (
+      <ToastProvider>
+        <OnboardingPage />
+      </ToastProvider>
+    );
+  }
+
+  const ActiveView = views[view] || HomePage;
+
+  return (
+    <ToastProvider>
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:px-4 focus:py-2 focus:rounded-[var(--radius-sm)] focus:bg-[var(--brand-primary)] focus:text-white focus:text-sm focus:font-medium"
+      >
+        Skip to content
+      </a>
+      <div className="flex h-screen overflow-hidden">
+        <Sidebar />
+        <div className="flex flex-col flex-1 overflow-hidden">
+          <TopBar />
+          <main id="main-content" className="flex-1 overflow-y-auto">
+            <ErrorBoundary>
+              <ActiveView />
+            </ErrorBoundary>
+          </main>
+        </div>
+      </div>
+    </ToastProvider>
+  );
+}

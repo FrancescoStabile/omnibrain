@@ -6,7 +6,7 @@
  */
 
 import { create } from "zustand";
-import type { BriefingData, ChatMessage, OnboardingResult, Proposal, SkillInfo, Status } from "./api";
+import type { BriefingData, ChatMessage, ChatSession, OnboardingResult, Proposal, SkillInfo, Status } from "./api";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types
@@ -15,6 +15,14 @@ import type { BriefingData, ChatMessage, OnboardingResult, Proposal, SkillInfo, 
 type View = "home" | "briefing" | "chat" | "skills" | "settings" | "onboarding";
 type Theme = "dark" | "light";
 type OnboardingStep = "welcome" | "connect" | "analyzing" | "reveal" | "interview";
+
+export interface ProactiveNotification {
+  id: string;
+  level: string;
+  title: string;
+  message: string;
+  timestamp: string;
+}
 
 interface AppState {
   // ── Navigation ──
@@ -30,8 +38,18 @@ interface AppState {
   addMessage: (msg: ChatMessage) => void;
   appendToLastAssistant: (chunk: string) => void;
   clearMessages: () => void;
+  setMessages: (msgs: ChatMessage[]) => void;
   chatLoading: boolean;
   setChatLoading: (v: boolean) => void;
+  chatSessionId: string;
+  setChatSessionId: (id: string) => void;
+  chatSessions: ChatSession[];
+  setChatSessions: (s: ChatSession[]) => void;
+
+  // ── Notifications (proactive) ──
+  notifications: ProactiveNotification[];
+  addNotification: (n: ProactiveNotification) => void;
+  dismissNotification: (id: string) => void;
 
   // ── Proposals (proactive feed) ──
   proposals: Proposal[];
@@ -91,6 +109,15 @@ function getInitialOnboardingComplete(): boolean {
   }
 }
 
+function getInitialSessionId(): string {
+  if (typeof window === "undefined") return "default";
+  try {
+    return localStorage.getItem("omnibrain-chat-session") || "default";
+  } catch {
+    return "default";
+  }
+}
+
 function applyTheme(theme: Theme) {
   if (typeof document !== "undefined") {
     document.documentElement.setAttribute("data-theme", theme);
@@ -135,8 +162,27 @@ export const useStore = create<AppState>((set) => ({
       return { messages: msgs };
     }),
   clearMessages: () => set({ messages: [] }),
+  setMessages: (messages) => set({ messages }),
   chatLoading: false,
   setChatLoading: (chatLoading) => set({ chatLoading }),
+  chatSessionId: getInitialSessionId(),
+  setChatSessionId: (chatSessionId) => {
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("omnibrain-chat-session", chatSessionId);
+      }
+    } catch { /* quota */ }
+    set({ chatSessionId });
+  },
+  chatSessions: [],
+  setChatSessions: (chatSessions) => set({ chatSessions }),
+
+  // Notifications
+  notifications: [],
+  addNotification: (n) =>
+    set((s) => ({ notifications: [n, ...s.notifications].slice(0, 50) })),
+  dismissNotification: (id) =>
+    set((s) => ({ notifications: s.notifications.filter((n) => n.id !== id) })),
 
   // Proposals
   proposals: [],

@@ -810,11 +810,20 @@ class OmniBrainAPIServer:
         ) -> StreamingResponse:
             """Streaming chat via Server-Sent Events.
 
-            Sends the user message to the LLM router with memory context
-            and streams the response token by token.
+            Sends the user message to the LLM router with memory context,
+            conversation history, and streams the response token by token.
+            Persists all messages to DB for session continuity.
             """
+            session_id = body.session_id or "default"
+
             async def event_generator() -> Any:
-                # ── 1. Gather memory context ──
+                # ── 1. Persist user message ──
+                try:
+                    self._db.save_chat_message(session_id, "user", body.message)
+                except Exception as e:
+                    logger.warning(f"Failed to save user message: {e}")
+
+                # ── 2. Gather memory context ──
                 memory_context = ""
                 if self._memory and body.message.strip():
                     results = self._memory.search(body.message, max_results=5)
@@ -830,7 +839,7 @@ class OmniBrainAPIServer:
                             + "\n".join(f"- {s}" for s in snippets)
                         )
 
-                # ── 2. Build system prompt ──
+                # ── 3. Build system prompt ──
                 system = self._system_prompt
                 user_name = self._db.get_preference("user_name", "")
                 if user_name:
@@ -838,10 +847,19 @@ class OmniBrainAPIServer:
                 if memory_context:
                     system += memory_context
 
-                # ── 3. Build messages ──
-                messages = [{"role": "user", "content": body.message}]
+                # ── 4. Build messages with conversation history ──
+                messages: list[dict[str, str]] = []
+                try:
+                    history = self._db.get_chat_messages(session_id, limit=20)
+                    # Exclude the message we just saved (last user msg)
+                    for msg in history[:-1]:
+                        messages.append({"role": msg["role"], "content": msg["content"]})
+                except Exception:
+                    pass
+                # Always append current user message as the last one
+                messages.append({"role": "user", "content": body.message})
 
-                # ── 4. Stream from LLM or fallback ──
+                # ── 5. Stream from LLM or fallback ──
                 full_response = ""
 
                 if self._router:
@@ -878,20 +896,39 @@ class OmniBrainAPIServer:
                         await asyncio.sleep(0.02)
                     full_response = fallback
 
-                # ── 5. Store conversation in memory ──
+                # ── 6. Persist assistant response ──
+                if full_response.strip():
+                    try:
+                        self._db.save_chat_message(session_id, "assistant", full_response)
+                    except Exception as e:
+                        logger.warning(f"Failed to save assistant message: {e}")
+
+                # ── 7. Store conversation in memory ──
                 if self._memory and body.message.strip() and full_response.strip():
                     try:
                         self._memory.store(
                             text=f"User: {body.message}\nAssistant: {full_response[:500]}",
                             source="chat",
                             source_type="conversation",
-                            metadata={"session_id": body.session_id or "default"},
+                            metadata={"session_id": session_id},
                         )
                     except Exception as e:
                         logger.warning(f"Failed to store chat in memory: {e}")
 
-                # ── 6. Done signal ──
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                # ── 8. Observe action for pattern detection ──
+                pd = getattr(self, "_pattern_detector", None)
+                if pd:
+                    try:
+                        pd.observe_action(
+                            action_type="chat",
+                            description=f"User asked: {body.message[:100]}",
+                            context={"session_id": session_id},
+                        )
+                    except Exception:
+                        pass
+
+                # ── 9. Done signal ──
+                yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
 
             return StreamingResponse(
                 event_generator(),
@@ -902,6 +939,38 @@ class OmniBrainAPIServer:
                     "X-Accel-Buffering": "no",
                 },
             )
+
+        # ══════════════════════════════════════════════════════════════════
+        # Chat history & session management
+        # ══════════════════════════════════════════════════════════════════
+
+        @app.get("/api/v1/chat/sessions")
+        async def get_chat_sessions(
+            limit: int = Query(20, ge=1, le=100),
+            token: str = Depends(verify_api_key),
+        ) -> dict[str, Any]:
+            """List recent chat sessions."""
+            sessions = self._db.get_chat_sessions(limit)
+            return {"sessions": sessions}
+
+        @app.get("/api/v1/chat/history")
+        async def get_chat_history(
+            session_id: str = Query("default"),
+            limit: int = Query(100, ge=1, le=500),
+            token: str = Depends(verify_api_key),
+        ) -> dict[str, Any]:
+            """Get chat messages for a session."""
+            messages = self._db.get_chat_messages(session_id, limit)
+            return {"session_id": session_id, "messages": messages}
+
+        @app.delete("/api/v1/chat/sessions/{session_id}")
+        async def delete_chat_session(
+            session_id: str,
+            token: str = Depends(verify_api_key),
+        ) -> dict[str, Any]:
+            """Delete a chat session."""
+            deleted = self._db.delete_chat_session(session_id)
+            return {"ok": True, "deleted": deleted}
 
         # ══════════════════════════════════════════════════════════════════
         # OAuth — Google
@@ -1143,6 +1212,8 @@ def create_api_server(
     """Factory function to create an API server with default wiring.
 
     Used by the CLI `omnibrain api` command and the daemon.
+    Creates and wires: DB, MemoryManager, BriefingGenerator, LLMRouter,
+    ProactiveEngine (with PriorityScorer + PatternDetector), WebSocket broadcast.
     """
     from omnibrain.config import OmniBrainConfig
 
@@ -1179,12 +1250,69 @@ def create_api_server(
     except Exception as e:
         logger.warning(f"Failed to create LLM router: {e}")
 
-    return OmniBrainAPIServer(
+    # ── Wire ProactiveEngine + PriorityScorer + PatternDetector ──
+    engine = None
+    pattern_detector = None
+    try:
+        from omnibrain.proactive.engine import ProactiveEngine
+        from omnibrain.proactive.patterns import PatternDetector
+
+        engine = ProactiveEngine(db, config)
+        engine.register_defaults(
+            briefing_generator=briefing_gen,
+            memory_manager=memory,
+        )
+        pattern_detector = PatternDetector(db)
+        logger.info("ProactiveEngine + PatternDetector wired")
+    except Exception as e:
+        logger.warning(f"Failed to create ProactiveEngine: {e}")
+
+    server = OmniBrainAPIServer(
         db=db,
         memory_manager=memory,
         briefing_gen=briefing_gen,
+        engine_status_fn=engine.get_status if engine else None,
         auth_token=auth_token,
         version=version,
         data_dir=actual_dir,
         router=router,
     )
+
+    # Store references on server for access in endpoints
+    server._engine = engine  # type: ignore[attr-defined]
+    server._pattern_detector = pattern_detector  # type: ignore[attr-defined]
+
+    # ── Wire ProactiveEngine notify → WebSocket broadcast ──
+    if engine:
+        _loop_ref: asyncio.AbstractEventLoop | None = None
+
+        def _notify_via_ws(level: str, title: str, message: str) -> None:
+            """Bridge sync notify callback → async WebSocket broadcast."""
+            payload = {
+                "level": level,
+                "title": title,
+                "message": message,
+                "timestamp": datetime.now().isoformat(),
+            }
+            try:
+                loop = _loop_ref or asyncio.get_running_loop()
+                loop.create_task(server.broadcast("notification", payload))
+            except RuntimeError:
+                logger.debug("No event loop for WS broadcast (probably testing)")
+
+        engine.set_notify_callback(_notify_via_ws)
+
+        # Start engine as a background task on FastAPI startup
+        @server.app.on_event("startup")
+        async def _start_proactive_engine() -> None:
+            nonlocal _loop_ref
+            _loop_ref = asyncio.get_running_loop()
+            asyncio.create_task(engine.run())
+            logger.info("ProactiveEngine started as background task")
+
+        @server.app.on_event("shutdown")
+        async def _stop_proactive_engine() -> None:
+            await engine.stop()
+            logger.info("ProactiveEngine stopped")
+
+    return server

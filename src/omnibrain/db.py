@@ -141,6 +141,16 @@ CREATE TABLE IF NOT EXISTS installed_skills (
     data TEXT
 );
 
+-- Chat message history (persistent conversations)
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL DEFAULT 'default',
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+    metadata TEXT
+);
+
 -- Schema version tracking
 CREATE TABLE IF NOT EXISTS schema_meta (
     key TEXT PRIMARY KEY,
@@ -184,6 +194,8 @@ CREATE INDEX IF NOT EXISTS idx_observations_type ON observations(pattern_type);
 CREATE INDEX IF NOT EXISTS idx_briefings_date ON briefings(date);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON agent_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_skills_enabled ON installed_skills(enabled);
+CREATE INDEX IF NOT EXISTS idx_chat_session ON chat_messages(session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_timestamp ON chat_messages(timestamp);
 """
 
 
@@ -623,6 +635,65 @@ class OmniBrainDB:
                 return json.loads(row["data"])
             return {}
 
+    # ── Chat Messages ──
+
+    def save_chat_message(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> int:
+        """Save a chat message. Returns the message ID."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """INSERT INTO chat_messages (session_id, role, content, metadata)
+                   VALUES (?, ?, ?, ?)""",
+                (session_id, role, content, json.dumps(metadata or {})),
+            )
+            return cursor.lastrowid or 0
+
+    def get_chat_messages(
+        self,
+        session_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Get chat messages for a session, ordered by timestamp."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT * FROM chat_messages
+                   WHERE session_id = ?
+                   ORDER BY timestamp ASC
+                   LIMIT ?""",
+                (session_id, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_chat_sessions(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Get recent chat sessions with their last message."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT session_id,
+                          COUNT(*) as message_count,
+                          MIN(timestamp) as started_at,
+                          MAX(timestamp) as last_message_at
+                   FROM chat_messages
+                   GROUP BY session_id
+                   ORDER BY last_message_at DESC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def delete_chat_session(self, session_id: str) -> int:
+        """Delete all messages in a chat session. Returns count deleted."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM chat_messages WHERE session_id = ?",
+                (session_id,),
+            )
+            return cursor.rowcount
+
     # ── Stats ──
 
     def get_stats(self) -> dict[str, int]:
@@ -642,6 +713,12 @@ class OmniBrainDB:
             ).fetchone()[0]
             stats["installed_skills"] = conn.execute(
                 "SELECT COUNT(*) FROM installed_skills"
+            ).fetchone()[0]
+            stats["chat_messages"] = conn.execute(
+                "SELECT COUNT(*) FROM chat_messages"
+            ).fetchone()[0]
+            stats["chat_sessions"] = conn.execute(
+                "SELECT COUNT(DISTINCT session_id) FROM chat_messages"
             ).fetchone()[0]
         return stats
 
@@ -694,7 +771,8 @@ class OmniBrainDB:
         """Delete ALL data. GDPR right to delete."""
         with self._connect() as conn:
             for table in ["events", "contacts", "proposals", "observations",
-                          "preferences", "briefings", "agent_sessions", "installed_skills"]:
+                          "preferences", "briefings", "agent_sessions",
+                          "installed_skills", "chat_messages"]:
                 conn.execute(f"DELETE FROM {table}")
         self.vacuum()
         logger.warning("All data wiped.")

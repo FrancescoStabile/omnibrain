@@ -19,6 +19,7 @@ import { api } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { ToastProvider } from "@/components/ui/toast";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { useWebSocket } from "@/hooks/useWebSocket";
 
 const views: Record<string, React.FC> = {
   home: HomePage,
@@ -37,6 +38,9 @@ export function AppShell() {
   const setGoogleConnected = useStore((s) => s.setGoogleConnected);
   const setOnboardingStep = useStore((s) => s.setOnboardingStep);
   const [ready, setReady] = useState(false);
+
+  // ── WebSocket for real-time proactive notifications ──
+  useWebSocket();
 
   // Apply persisted theme on first render
   useEffect(() => {

@@ -110,10 +110,40 @@ function TypingIndicator() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function ChatPage() {
-  const { messages, addMessage, appendToLastAssistant, chatLoading, setChatLoading } = useStore();
+  const {
+    messages, addMessage, appendToLastAssistant, setMessages,
+    chatLoading, setChatLoading,
+    chatSessionId, setChatSessionId,
+  } = useStore();
   const [input, setInput] = useState("");
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Load chat history from backend on mount (session persistence)
+  useEffect(() => {
+    if (historyLoaded) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { api } = await import("@/lib/api");
+        const data = await api.getChatHistory(chatSessionId);
+        if (!cancelled && data.messages?.length) {
+          const loaded: ChatMessage[] = data.messages.map((m: { role: string; content: string; timestamp?: string }) => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+            timestamp: m.timestamp || "",
+          }));
+          setMessages(loaded);
+        }
+      } catch {
+        // Backend might not be ready yet, that's fine
+      } finally {
+        if (!cancelled) setHistoryLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [chatSessionId, historyLoaded, setMessages]);
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -148,11 +178,15 @@ export function ChatPage() {
     });
 
     try {
-      for await (const event of streamChat(text.trim())) {
+      for await (const event of streamChat(text.trim(), chatSessionId)) {
         if (event.type === "token" && event.content) {
           appendToLastAssistant(event.content);
         }
         if (event.type === "done") {
+          // Backend may return session_id — store it
+          if (event.session_id && event.session_id !== chatSessionId) {
+            setChatSessionId(event.session_id);
+          }
           break;
         }
       }

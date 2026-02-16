@@ -137,6 +137,13 @@ export interface ChatAction {
   data?: Record<string, unknown>;
 }
 
+export interface ChatSession {
+  session_id: string;
+  message_count: number;
+  started_at: string;
+  last_message_at: string;
+}
+
 export interface Settings {
   profile: {
     name: string;
@@ -293,6 +300,20 @@ export const api = {
       body: JSON.stringify(settings),
     }),
 
+  // ── Chat sessions & history ──
+  getChatSessions: (limit = 20) =>
+    request<{ sessions: ChatSession[] }>(`/chat/sessions?limit=${limit}`),
+
+  getChatHistory: (sessionId = "default", limit = 100) =>
+    request<{ session_id: string; messages: ChatMessage[] }>(
+      `/chat/history?session_id=${encodeURIComponent(sessionId)}&limit=${limit}`,
+    ),
+
+  deleteChatSession: (sessionId: string) =>
+    request<{ ok: boolean; deleted: number }>(`/chat/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    }),
+
   // ── Stats ──
   getStats: () => request<Record<string, number>>("/stats"),
 
@@ -331,7 +352,7 @@ export const api = {
 export async function* streamChat(
   message: string,
   sessionId?: string,
-): AsyncGenerator<{ type: string; content?: string; action?: ChatAction }> {
+): AsyncGenerator<{ type: string; content?: string; action?: ChatAction; session_id?: string }> {
   const res = await fetch(`${BASE}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

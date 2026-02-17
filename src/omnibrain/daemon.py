@@ -41,12 +41,109 @@ from omnibrain.skill_context import EventBus
 logger = logging.getLogger("omnibrain.daemon")
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Shared Resource Container — eliminates triple resource creation
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class ResourceContainer:
+    """Shared resources for all daemon subsystems.
+
+    Created once in run(), used everywhere — no more
+    MemoryManager×3, LLMRouter×3, etc.
+    """
+
+    def __init__(self, config: OmniBrainConfig, db: OmniBrainDB) -> None:
+        self.config = config
+        self.db = db
+        self.memory: Any = None
+        self.router: Any = None
+        self.briefing_gen: Any = None
+        self.knowledge_graph: Any = None
+        self.pattern_detector: Any = None
+        self.review_engine: Any = None
+        self.approval_gate: Any = None
+        self.sanitizer: Any = None
+
+    def initialize(self) -> None:
+        """Create all shared resources once."""
+        # Memory
+        try:
+            from omnibrain.memory import MemoryManager
+            self.memory = MemoryManager(self.config.data_dir, enable_chroma=False)
+        except Exception as e:
+            logger.warning("Failed to create MemoryManager: %s", e)
+
+        # LLM Router
+        try:
+            import os
+            from omnigent.router import LLMRouter, Provider
+            if os.environ.get("DEEPSEEK_API_KEY"):
+                self.router = LLMRouter(primary=Provider.DEEPSEEK)
+            elif os.environ.get("OPENAI_API_KEY"):
+                self.router = LLMRouter(primary=Provider.OPENAI)
+            elif os.environ.get("ANTHROPIC_API_KEY"):
+                self.router = LLMRouter(primary=Provider.CLAUDE)
+            if self.router:
+                logger.info("LLM router initialized")
+        except Exception as e:
+            logger.warning("Failed to create LLM router: %s", e)
+
+        # BriefingGenerator
+        try:
+            from omnibrain.briefing import BriefingGenerator
+            self.briefing_gen = BriefingGenerator(self.db, self.memory, router=self.router)
+        except Exception as e:
+            logger.warning("Failed to create BriefingGenerator: %s", e)
+
+        # KnowledgeGraph
+        if self.memory:
+            try:
+                from omnibrain.knowledge_graph import KnowledgeGraph
+                self.knowledge_graph = KnowledgeGraph(self.db, self.memory)
+                logger.info("KnowledgeGraph wired")
+            except Exception as e:
+                logger.warning("Failed to create KnowledgeGraph: %s", e)
+
+        # PatternDetector
+        try:
+            from omnibrain.proactive.patterns import PatternDetector
+            self.pattern_detector = PatternDetector(self.db)
+        except Exception as e:
+            logger.warning("Failed to create PatternDetector: %s", e)
+
+        # ReviewEngine
+        try:
+            from omnibrain.review_engine import ReviewEngine
+            self.review_engine = ReviewEngine(self.db, self.memory)
+            logger.info("ReviewEngine wired")
+        except Exception as e:
+            logger.warning("Failed to create ReviewEngine: %s", e)
+
+        # ApprovalGate
+        try:
+            from omnibrain.approval import ApprovalGate
+            self.approval_gate = ApprovalGate(self.db)
+            logger.info("ApprovalGate wired")
+        except Exception as e:
+            logger.warning("Failed to create ApprovalGate: %s", e)
+
+        # PromptSanitizer
+        try:
+            from omnibrain.prompt_injection import PromptSanitizer
+            self.sanitizer = PromptSanitizer()
+            logger.info("PromptSanitizer wired")
+        except Exception as e:
+            logger.warning("Failed to create PromptSanitizer: %s", e)
+
+
 class OmniBrainDaemon:
     """The OmniBrain daemon — runs forever, monitors everything."""
 
     def __init__(self, config: OmniBrainConfig | None = None) -> None:
         self.config = config or OmniBrainConfig()
         self.db: OmniBrainDB | None = None
+        self.resources: ResourceContainer | None = None
         self._running = False
         self._tasks: list[asyncio.Task[Any]] = []
         self._console = Console()
@@ -74,11 +171,14 @@ class OmniBrainDaemon:
                 "\n[bold red]⚠ No LLM API keys configured.[/]\n"
                 "Run [bold cyan]omnibrain setup[/] or set DEEPSEEK_API_KEY in .env\n"
             )
-            # Don't exit — daemon can still collect data and serve API
 
         logger.info(f"OmniBrain v{__version__} starting — PID {self._get_pid()}")
         logger.info(f"Data directory: {self.config.data_dir}")
         logger.info(f"Database: {self.config.db_path}")
+
+        # Initialize shared resources ONCE
+        self.resources = ResourceContainer(self.config, self.db)
+        self.resources.initialize()
 
         try:
             # Launch all concurrent tasks
@@ -316,50 +416,16 @@ class OmniBrainDaemon:
         logger.info("Proactive engine starting")
 
         try:
-            from omnibrain.briefing import BriefingGenerator
-            from omnibrain.memory import MemoryManager
             from omnibrain.proactive.engine import ProactiveEngine
 
-            memory = MemoryManager(self.config.data_dir, enable_chroma=False)
-
-            # Create LLM router for narrative briefings
-            router = None
-            try:
-                import os
-                from omnigent.router import LLMRouter, Provider
-                if os.environ.get("DEEPSEEK_API_KEY"):
-                    router = LLMRouter(primary=Provider.DEEPSEEK)
-                elif os.environ.get("OPENAI_API_KEY"):
-                    router = LLMRouter(primary=Provider.OPENAI)
-                elif os.environ.get("ANTHROPIC_API_KEY"):
-                    router = LLMRouter(primary=Provider.CLAUDE)
-            except Exception:
-                pass
-
-            briefing_gen = BriefingGenerator(self.db, memory, router=router)
-
-            # Wire ReviewEngine for rich evening/weekly summaries
-            review_engine = None
-            try:
-                from omnibrain.review_engine import ReviewEngine
-                review_engine = ReviewEngine(self.db, memory)
-            except Exception:
-                pass
-
-            # Wire PatternDetector for proper pattern analysis
-            pattern_detector = None
-            try:
-                from omnibrain.proactive.patterns import PatternDetector
-                pattern_detector = PatternDetector(self.db)
-            except Exception:
-                pass
+            rc = self.resources
 
             self._proactive_engine = ProactiveEngine(self.db, self.config)
             self._proactive_engine.register_defaults(
-                briefing_generator=briefing_gen,
-                memory_manager=memory,
-                review_engine=review_engine,
-                pattern_detector=pattern_detector,
+                briefing_generator=rc.briefing_gen,
+                memory_manager=rc.memory,
+                review_engine=rc.review_engine,
+                pattern_detector=rc.pattern_detector,
                 check_interval_minutes=self.config.check_interval_minutes,
                 briefing_time=self.config.briefing_time,
                 evening_time=self.config.evening_time,
@@ -433,93 +499,35 @@ class OmniBrainDaemon:
     async def _api_server(self) -> None:
         """FastAPI REST server — delegates to ``interfaces/api_server.py``.
 
-        Now fully wired: LLMRouter, KnowledgeGraph, PatternDetector,
-        ReviewEngine, SkillRuntime — aligned with create_api_server() factory.
+        Uses shared ResourceContainer for all subsystems.
         """
         logger.info(
             f"API server starting on {self.config.api_host}:{self.config.api_port}"
         )
         try:
             from omnibrain.interfaces.api_server import OmniBrainAPIServer
-            from omnibrain.memory import MemoryManager
 
-            memory = None
-            briefing_gen = None
-            router = None
-            knowledge_graph = None
-            pattern_detector = None
-            review_engine = None
-
-            # Memory
-            try:
-                memory = MemoryManager(self.config.data_dir, enable_chroma=False)
-            except Exception:
-                pass
-
-            # LLM Router
-            try:
-                import os
-                from omnigent.router import LLMRouter, Provider
-                if os.environ.get("DEEPSEEK_API_KEY"):
-                    router = LLMRouter(primary=Provider.DEEPSEEK)
-                elif os.environ.get("OPENAI_API_KEY"):
-                    router = LLMRouter(primary=Provider.OPENAI)
-                elif os.environ.get("ANTHROPIC_API_KEY"):
-                    router = LLMRouter(primary=Provider.CLAUDE)
-                if router:
-                    logger.info("Daemon: LLM router created")
-            except Exception as e:
-                logger.warning(f"Daemon: failed to create LLM router: {e}")
-
-            # BriefingGenerator (with router for LLM narratives)
-            try:
-                from omnibrain.briefing import BriefingGenerator
-                briefing_gen = BriefingGenerator(self.db, memory, router=router)
-            except Exception:
-                pass
-
-            # KnowledgeGraph
-            if memory:
-                try:
-                    from omnibrain.knowledge_graph import KnowledgeGraph
-                    knowledge_graph = KnowledgeGraph(self.db, memory)
-                    logger.info("Daemon: KnowledgeGraph wired")
-                except Exception as e:
-                    logger.warning(f"Daemon: KnowledgeGraph failed: {e}")
-
-            # PatternDetector
-            try:
-                from omnibrain.proactive.patterns import PatternDetector
-                pattern_detector = PatternDetector(self.db)
-            except Exception as e:
-                logger.warning(f"Daemon: PatternDetector failed: {e}")
-
-            # ReviewEngine
-            try:
-                from omnibrain.review_engine import ReviewEngine
-                review_engine = ReviewEngine(self.db, memory)
-                logger.info("Daemon: ReviewEngine wired")
-            except Exception as e:
-                logger.warning(f"Daemon: ReviewEngine failed: {e}")
-
+            rc = self.resources
             engine_status = None
             if self._proactive_engine:
                 engine_status = self._proactive_engine.get_status
 
             server = OmniBrainAPIServer(
                 db=self.db,
-                memory_manager=memory,
-                briefing_gen=briefing_gen,
+                memory_manager=rc.memory,
+                briefing_gen=rc.briefing_gen,
                 engine_status_fn=engine_status,
                 version=__version__,
                 data_dir=self.config.data_dir,
-                router=router,
+                router=rc.router,
             )
 
             # Attach subsystems so endpoints can access them
-            server._pattern_detector = pattern_detector  # type: ignore[attr-defined]
-            server._knowledge_graph = knowledge_graph  # type: ignore[attr-defined]
+            server._pattern_detector = rc.pattern_detector  # type: ignore[attr-defined]
+            server._knowledge_graph = rc.knowledge_graph  # type: ignore[attr-defined]
             server._event_bus = self._event_bus  # type: ignore[attr-defined]
+            server._approval_gate = rc.approval_gate  # type: ignore[attr-defined]
+            server._sanitizer = rc.sanitizer  # type: ignore[attr-defined]
 
             # Wire SkillRuntime into the API server
             if self._skill_runtime:
@@ -550,37 +558,9 @@ class OmniBrainDaemon:
         """Discover and run Skills via the SkillRuntime."""
         logger.info("SkillRuntime starting")
         try:
-            from omnibrain.memory import MemoryManager
             from omnibrain.skill_runtime import SkillRuntime
 
-            memory = None
-            try:
-                memory = MemoryManager(self.config.data_dir, enable_chroma=False)
-            except Exception:
-                pass
-
-            # Create LLM router for Skills
-            router = None
-            try:
-                import os
-                from omnigent.router import LLMRouter, Provider
-                if os.environ.get("DEEPSEEK_API_KEY"):
-                    router = LLMRouter(primary=Provider.DEEPSEEK)
-                elif os.environ.get("OPENAI_API_KEY"):
-                    router = LLMRouter(primary=Provider.OPENAI)
-                elif os.environ.get("ANTHROPIC_API_KEY"):
-                    router = LLMRouter(primary=Provider.CLAUDE)
-            except Exception:
-                pass
-
-            # Wire KnowledgeGraph for Skills
-            knowledge_graph = None
-            if memory:
-                try:
-                    from omnibrain.knowledge_graph import KnowledgeGraph
-                    knowledge_graph = KnowledgeGraph(self.db, memory)
-                except Exception:
-                    pass
+            rc = self.resources
 
             # Resolve skill directories
             project_root = Path(__file__).resolve().parent.parent.parent
@@ -591,11 +571,12 @@ class OmniBrainDaemon:
 
             self._skill_runtime = SkillRuntime(
                 db=self.db,
-                memory=memory,
-                knowledge_graph=knowledge_graph,
+                memory=rc.memory,
+                knowledge_graph=rc.knowledge_graph,
+                approval_gate=rc.approval_gate,
                 config=self.config,
                 event_bus=self._event_bus,
-                llm_router=router,
+                llm_router=rc.router,
             )
 
             discovered = self._skill_runtime.discover(skill_dirs)

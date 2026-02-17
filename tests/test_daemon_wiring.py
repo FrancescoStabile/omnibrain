@@ -14,9 +14,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from omnibrain.daemon import OmniBrainDaemon
+from omnibrain.daemon import OmniBrainDaemon, ResourceContainer
 from omnibrain.config import OmniBrainConfig
 from omnibrain.skill_context import EventBus
+
+
+def _make_resources_stub() -> ResourceContainer.__class__:
+    """Return a MagicMock mimicking a fully-initialised ResourceContainer."""
+    rc = MagicMock(spec=ResourceContainer)
+    rc.memory = MagicMock()
+    rc.router = MagicMock()
+    rc.briefing_gen = MagicMock()
+    rc.knowledge_graph = MagicMock()
+    rc.pattern_detector = MagicMock()
+    rc.review_engine = MagicMock()
+    rc.approval_gate = MagicMock()
+    rc.sanitizer = MagicMock()
+    return rc
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -115,6 +129,7 @@ class TestSkillRuntimeLoop:
         cfg._data_dir = tmp_path
         d = OmniBrainDaemon(config=cfg)
         d.db = MagicMock()
+        d.resources = _make_resources_stub()
 
         mock_runtime = MagicMock()
         mock_runtime.discover = MagicMock(return_value=[])
@@ -149,6 +164,7 @@ class TestSkillRuntimeLoop:
         cfg._data_dir = tmp_path
         d = OmniBrainDaemon(config=cfg)
         d.db = MagicMock()
+        d.resources = _make_resources_stub()
 
         mock_runtime = MagicMock()
         mock_runtime.discover = MagicMock(return_value=[])
@@ -182,6 +198,7 @@ class TestProactiveLoop:
         cfg._data_dir = tmp_path
         d = OmniBrainDaemon(config=cfg)
         d.db = MagicMock()
+        d.resources = _make_resources_stub()
 
         mock_engine = MagicMock()
         mock_engine.register_defaults = MagicMock()
@@ -189,11 +206,7 @@ class TestProactiveLoop:
         mock_engine.stop = AsyncMock()
         mock_engine.tasks = []
 
-        with (
-            patch("omnibrain.memory.MemoryManager", return_value=MagicMock()),
-            patch("omnibrain.briefing.BriefingGenerator", return_value=MagicMock()),
-            patch("omnibrain.proactive.engine.ProactiveEngine", return_value=mock_engine),
-        ):
+        with patch("omnibrain.proactive.engine.ProactiveEngine", return_value=mock_engine):
             try:
                 await d._proactive_loop()
             except asyncio.CancelledError:
@@ -232,6 +245,7 @@ class TestAPIServer:
         cfg._data_dir = tmp_path
         d = OmniBrainDaemon(config=cfg)
         d.db = MagicMock()
+        d.resources = _make_resources_stub()
 
         mock_server = MagicMock()
         mock_server.app = MagicMock()
@@ -243,8 +257,6 @@ class TestAPIServer:
             patch("omnibrain.interfaces.api_server.OmniBrainAPIServer", return_value=mock_server) as mock_api_cls,
             patch("uvicorn.Config", return_value=MagicMock()) as mock_uvi_config,
             patch("uvicorn.Server", return_value=mock_uvi_server),
-            patch("omnibrain.memory.MemoryManager", return_value=MagicMock()),
-            patch("omnibrain.briefing.BriefingGenerator", return_value=MagicMock()),
         ):
             try:
                 await d._api_server()

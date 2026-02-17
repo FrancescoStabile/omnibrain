@@ -112,7 +112,9 @@ CREATE TABLE IF NOT EXISTS briefings (
     type TEXT NOT NULL,
     content TEXT NOT NULL,
     events_processed INTEGER DEFAULT 0,
-    actions_proposed INTEGER DEFAULT 0
+    actions_proposed INTEGER DEFAULT 0,
+    generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(type, date) ON CONFLICT REPLACE
 );
 
 -- Omnigent session data (persists reasoning state)
@@ -231,6 +233,8 @@ class OmniBrainDB:
             self._migrate_events_unique(conn)
             # Migration: add snoozed_until column to proposals if missing
             self._migrate_proposals_snooze(conn)
+            # Migration: add UNIQUE constraint + generated_at to briefings if missing
+            self._migrate_briefings_unique(conn)
         logger.info(f"Database initialized at {self.db_path}")
 
     def _migrate_events_unique(self, conn: sqlite3.Connection) -> None:
@@ -281,6 +285,36 @@ class OmniBrainDB:
         if "snoozed_until" not in cols:
             conn.execute("ALTER TABLE proposals ADD COLUMN snoozed_until TEXT")
             logger.info("Added snoozed_until column to proposals")
+
+    def _migrate_briefings_unique(self, conn: sqlite3.Connection) -> None:
+        """Ensure briefings table has UNIQUE(type, date) and generated_at column."""
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='briefings'"
+        ).fetchone()
+        if row and "UNIQUE" not in (row[0] or ""):
+            logger.info("Migrating briefings table: adding UNIQUE constraint + generated_at")
+            conn.execute("ALTER TABLE briefings RENAME TO briefings_old")
+            conn.executescript("""
+                CREATE TABLE briefings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    events_processed INTEGER DEFAULT 0,
+                    actions_proposed INTEGER DEFAULT 0,
+                    generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(type, date) ON CONFLICT REPLACE
+                );
+            """)
+            conn.execute(
+                """INSERT OR REPLACE INTO briefings (id, date, type, content,
+                   events_processed, actions_proposed, generated_at)
+                   SELECT id, date, type, content,
+                   events_processed, actions_proposed, datetime('now')
+                   FROM briefings_old"""
+            )
+            conn.execute("DROP TABLE briefings_old")
+            logger.info("Briefings table migration complete")
 
     @contextmanager
     def _connect(self) -> Generator[sqlite3.Connection, None, None]:

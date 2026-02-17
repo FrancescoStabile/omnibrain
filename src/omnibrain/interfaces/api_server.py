@@ -1132,7 +1132,7 @@ class OmniBrainAPIServer:
                     try:
                         from omnibrain.conversation_extractor import extract_and_persist
 
-                        asyncio.get_event_loop().create_task(
+                        asyncio.create_task(
                             extract_and_persist(
                                 user_message=body.message,
                                 assistant_response=full_response,
@@ -1341,7 +1341,7 @@ class OmniBrainAPIServer:
                 )
 
             analyzer = OnboardingAnalyzer(self._data_dir)
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(None, analyzer.analyze)
 
             # Store onboarding completion in preferences
@@ -1489,7 +1489,7 @@ class OmniBrainAPIServer:
                     user_msg = " ".join(profile_text)
                     assistant_msg = f"Welcome {body.name or 'there'}! I've saved your profile."
 
-                    asyncio.get_event_loop().create_task(
+                    asyncio.create_task(
                         extract_and_persist(
                             user_message=user_msg,
                             assistant_response=assistant_msg,

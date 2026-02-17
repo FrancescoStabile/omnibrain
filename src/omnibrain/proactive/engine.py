@@ -111,8 +111,8 @@ class ScheduledTask:
                 return False
 
         if self.is_weekly_task:
-            if self.last_run and (now - self.last_run).days < 6:
-                return False
+            if self.last_run and self.last_run.isocalendar()[1] == now.isocalendar()[1] and self.last_run.year == now.year:
+                return False  # Already ran this ISO week
             current_day = now.strftime("%A").lower()
             if current_day != self.run_on_day.lower():
                 return False
@@ -421,7 +421,7 @@ class ProactiveEngine:
                     # Store via briefing generator's DB
                     from omnibrain.models import Briefing
                     briefing = Briefing(
-                        briefing_type="evening",
+                        type="evening",
                         date=summary.date,
                         content=text,
                         events_processed=summary.stats.total_events if summary.stats else 0,
@@ -511,7 +511,7 @@ class ProactiveEngine:
                     text = review.format_text()
                     from omnibrain.models import Briefing
                     briefing = Briefing(
-                        briefing_type="weekly",
+                        type="weekly",
                         date=review.end_date,
                         content=text,
                         events_processed=review.stats.total_events if review.stats else 0,

@@ -8,6 +8,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import {
   Home,
   MessageSquare,
@@ -58,11 +59,22 @@ export function MobileMenuButton() {
 
 export function Sidebar() {
   const { view, setView, sidebarOpen, setSidebarOpen, proposals } = useStore();
+  const router = useRouter();
   const pendingCount = proposals.filter((p) => p.status === "pending").length;
+
+  /** View-to-path mapping for Next.js navigation */
+  const viewPaths: Record<string, string> = {
+    home: "/",
+    briefing: "/briefing",
+    chat: "/chat",
+    skills: "/skills",
+    settings: "/settings",
+  };
 
   // Close mobile drawer on navigation
   const handleNav = (id: typeof navItems[number]["id"]) => {
     setView(id);
+    router.push(viewPaths[id] || "/", { scroll: false });
     // On mobile, close after navigation
     if (typeof window !== "undefined" && window.innerWidth < 640) {
       setSidebarOpen(false);

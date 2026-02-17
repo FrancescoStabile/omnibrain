@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ViewSync } from "@/components/layout/view-sync";
 
 export const metadata: Metadata = {
   title: "Skill Store",
@@ -6,6 +7,5 @@ export const metadata: Metadata = {
 };
 
 export default function SkillsRoute() {
-  const { AppShell } = require("@/components/layout/app-shell");
-  return <AppShell initialView="skills" />;
+  return <ViewSync />;
 }

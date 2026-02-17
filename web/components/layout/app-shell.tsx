@@ -8,7 +8,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter, usePathname } from "next/navigation";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./top-bar";
 import { HomePage } from "@/components/views/home";
@@ -33,27 +32,8 @@ const views: Record<string, React.FC> = {
   onboarding: OnboardingPage,
 };
 
-/** Map URL pathname to view name */
-const pathToView: Record<string, View> = {
-  "/": "home",
-  "/chat": "chat",
-  "/briefing": "briefing",
-  "/skills": "skills",
-  "/settings": "settings",
-};
-
-/** Map view name to URL pathname */
-const viewToPath: Record<View, string> = {
-  home: "/",
-  briefing: "/briefing",
-  chat: "/chat",
-  skills: "/skills",
-  settings: "/settings",
-  onboarding: "/",
-};
-
 interface AppShellProps {
-  initialView?: View;
+  children?: React.ReactNode;
 }
 
 /**
@@ -102,7 +82,7 @@ function ToastBridge() {
   return null;
 }
 
-export function AppShell({ initialView }: AppShellProps) {
+export function AppShell({ children }: AppShellProps) {
   const view = useStore((s) => s.view);
   const setView = useStore((s) => s.setView);
   const onboardingComplete = useStore((s) => s.onboardingComplete);
@@ -110,33 +90,12 @@ export function AppShell({ initialView }: AppShellProps) {
   const setGoogleConnected = useStore((s) => s.setGoogleConnected);
   const setOnboardingStep = useStore((s) => s.setOnboardingStep);
   const [ready, setReady] = useState(false);
-  const router = useRouter();
-  const pathname = usePathname();
 
   // ── WebSocket for real-time proactive notifications ──
   useWebSocket();
 
   // ── Global keyboard shortcuts ──
   useHotkeys();
-
-  // Sync initial view from route on mount
-  useEffect(() => {
-    if (initialView && initialView !== view) {
-      setView(initialView);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialView]);
-
-  // Sync URL when view changes (only if different from current path)
-  useEffect(() => {
-    if (!ready) return;
-    if (view === "onboarding") return;
-    const targetPath = viewToPath[view] || "/";
-    if (pathname !== targetPath) {
-      router.push(targetPath, { scroll: false });
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, ready]);
 
   // Apply persisted theme on first render
   useEffect(() => {
@@ -207,6 +166,8 @@ export function AppShell({ initialView }: AppShellProps) {
     <ToastProvider>
       <ToastBridge />
       <ShortcutsHelp />
+      {/* ViewSync from route pages — syncs URL→store, renders nothing */}
+      {children}
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:px-4 focus:py-2 focus:rounded-[var(--radius-sm)] focus:bg-[var(--brand-primary)] focus:text-white focus:text-sm focus:font-medium"

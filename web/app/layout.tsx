@@ -64,9 +64,16 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // AppShell is imported dynamically to avoid "use client" in the server layout.
+  // It wraps the entire app — children (route pages) are rendered inside it
+  // as lightweight ViewSync components that just set the active view.
+  const AppShellWrapper = require("@/components/layout/app-shell-wrapper").AppShellWrapper;
+
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning>
-      <body className="font-sans antialiased">{children}</body>
+      <body className="font-sans antialiased">
+        <AppShellWrapper>{children}</AppShellWrapper>
+      </body>
     </html>
   );
 }

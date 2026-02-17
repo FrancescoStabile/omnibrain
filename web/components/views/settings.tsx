@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { api, type Settings } from "@/lib/api";
 import { useStore } from "@/lib/store";
+import { useNavigate } from "@/hooks/useNavigate";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -90,7 +91,7 @@ function ProfileTab() {
 
 function SkillsTab() {
   const skills = useStore((s) => s.skills);
-  const setView = useStore((s) => s.setView);
+  const navigate = useNavigate();
   const [toggling, setToggling] = useState<string | null>(null);
 
   const toggle = useCallback(async (name: string, enabled: boolean) => {
@@ -111,7 +112,7 @@ function SkillsTab() {
         <p className="text-sm text-[var(--text-secondary)]">
           No skills installed yet.
         </p>
-        <Button variant="primary" size="md" onClick={() => setView("skills")}>
+        <Button variant="primary" size="md" onClick={() => navigate("skills")}>
           <Puzzle className="h-4 w-4" /> Open Skill Store
         </Button>
       </div>
@@ -148,7 +149,7 @@ function SkillsTab() {
           </div>
         </Card>
       ))}
-      <Button variant="ghost" size="sm" onClick={() => setView("skills")}>
+      <Button variant="ghost" size="sm" onClick={() => navigate("skills")}>
         <ExternalLink className="h-3.5 w-3.5" /> Open Skill Store
       </Button>
     </div>

@@ -17,6 +17,7 @@ import { Share2, Download, Puzzle, ArrowRight } from "lucide-react";
 import { api, streamChat } from "@/lib/api";
 import type { InsightCard as InsightCardType, OnboardingResult } from "@/lib/api";
 import { useStore } from "@/lib/store";
+import { useNavigate } from "@/hooks/useNavigate";
 import { cn } from "@/lib/utils";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -507,7 +508,7 @@ function RevealStep({
   onFinish,
 }: { result: OnboardingResult; onFinish: () => void }) {
   const { stats } = result;
-  const setView = useStore((s) => s.setView);
+  const navigate = useNavigate();
   const setOnboardingComplete = useStore((s) => s.setOnboardingComplete);
   const [installing, setInstalling] = useState<string | null>(null);
 
@@ -520,15 +521,15 @@ function RevealStep({
     // Navigate based on action_type
     setOnboardingComplete(true);
     if (card.action_type === "view_event") {
-      setView("briefing");
+      navigate("briefing");
     } else if (card.action_type === "add_skill") {
-      setView("skills");
+      navigate("skills");
     } else if (card.action_type === "draft_email") {
-      setView("chat");
+      navigate("chat");
     } else {
-      setView("home");
+      navigate("home");
     }
-  }, [setOnboardingComplete, setView]);
+  }, [setOnboardingComplete, navigate]);
 
   const handleInstallSkill = useCallback(async (name: string) => {
     setInstalling(name);
@@ -836,7 +837,7 @@ export const OnboardingPage: React.FC = () => {
   const setOnboardingComplete = useStore((s) => s.setOnboardingComplete);
   const setGoogleConnected = useStore((s) => s.setGoogleConnected);
   const setOnboardingResult = useStore((s) => s.setOnboardingResult);
-  const setView = useStore((s) => s.setView);
+  const navigate = useNavigate();
 
   const stepIndex =
     step === "welcome" ? 0 : step === "connect" ? 1 : step === "analyzing" || step === "interview" ? 2 : 3;
@@ -856,8 +857,8 @@ export const OnboardingPage: React.FC = () => {
 
   const handleFinish = useCallback(() => {
     setOnboardingComplete(true);
-    setView("home");
-  }, [setOnboardingComplete, setView]);
+    navigate("home");
+  }, [setOnboardingComplete, navigate]);
 
   const handleSkipGoogle = useCallback(() => {
     setStep("interview");
@@ -865,8 +866,8 @@ export const OnboardingPage: React.FC = () => {
 
   const handleInterviewComplete = useCallback(() => {
     setOnboardingComplete(true);
-    setView("chat");
-  }, [setOnboardingComplete, setView]);
+    navigate("chat");
+  }, [setOnboardingComplete, navigate]);
 
   return (
     <div className="relative min-h-screen bg-[var(--bg-primary)]">

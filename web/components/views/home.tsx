@@ -21,6 +21,7 @@ import {
   Puzzle,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
+import { useNavigate } from "@/hooks/useNavigate";
 import { api, type Briefing, type BriefingData, type Proposal } from "@/lib/api";
 import { Card, CardHeader, CardTitle, CardBody, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -186,7 +187,8 @@ function StatsRow({ stats }: { stats: Record<string, number> }) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function HomePage() {
-  const { proposals, setProposals, status, setStatus, briefingData, setBriefingData, setView } = useStore();
+  const { proposals, setProposals, status, setStatus, briefingData, setBriefingData } = useStore();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState("");
 
@@ -233,7 +235,7 @@ export function HomePage() {
       {briefingData && (
         <Card
           variant="actionable"
-          onClick={() => setView("briefing")}
+          onClick={() => navigate("briefing")}
         >
           <CardHeader>
             <div className="flex items-center gap-2">
@@ -290,13 +292,13 @@ export function HomePage() {
               </p>
               <div className="flex flex-wrap justify-center gap-2">
                 <button
-                  onClick={() => setView("chat")}
+                  onClick={() => navigate("chat")}
                   className="px-4 py-2 rounded-full bg-[var(--bg-tertiary)] text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors flex items-center gap-1.5"
                 >
                   <MessageCircle className="h-3.5 w-3.5" /> Chat with me
                 </button>
                 <button
-                  onClick={() => setView("skills")}
+                  onClick={() => navigate("skills")}
                   className="px-4 py-2 rounded-full bg-[var(--bg-tertiary)] text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors flex items-center gap-1.5"
                 >
                   <Puzzle className="h-3.5 w-3.5" /> Explore Skills

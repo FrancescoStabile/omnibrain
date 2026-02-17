@@ -8,6 +8,7 @@
 "use client";
 
 import { useEffect, useCallback, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useStore } from "@/lib/store";
 
 interface ShortcutDef {
@@ -19,16 +20,33 @@ interface ShortcutDef {
   action: () => void;
 }
 
+const viewPaths: Record<string, string> = {
+  home: "/",
+  briefing: "/briefing",
+  chat: "/chat",
+  skills: "/skills",
+  settings: "/settings",
+};
+
 export function useHotkeys() {
   const setView = useStore((s) => s.setView);
+  const router = useRouter();
+
+  const navigate = useCallback(
+    (view: "home" | "briefing" | "chat" | "skills" | "settings") => {
+      setView(view);
+      router.push(viewPaths[view], { scroll: false });
+    },
+    [setView, router],
+  );
 
   const shortcuts: ShortcutDef[] = [
     // Navigation
-    { key: "1", meta: true, label: "Go to Home", action: () => setView("home") },
-    { key: "2", meta: true, label: "Go to Briefing", action: () => setView("briefing") },
-    { key: "3", meta: true, label: "Go to Chat", action: () => setView("chat") },
-    { key: "4", meta: true, label: "Go to Skills", action: () => setView("skills") },
-    { key: "5", meta: true, label: "Go to Settings", action: () => setView("settings") },
+    { key: "1", meta: true, label: "Go to Home", action: () => navigate("home") },
+    { key: "2", meta: true, label: "Go to Briefing", action: () => navigate("briefing") },
+    { key: "3", meta: true, label: "Go to Chat", action: () => navigate("chat") },
+    { key: "4", meta: true, label: "Go to Skills", action: () => navigate("skills") },
+    { key: "5", meta: true, label: "Go to Settings", action: () => navigate("settings") },
   ];
 
   const handleKeyDown = useCallback(
@@ -63,7 +81,7 @@ export function useHotkeys() {
         if (chatInput) {
           chatInput.focus();
         } else {
-          setView("chat");
+          navigate("chat");
         }
       }
 
@@ -75,7 +93,7 @@ export function useHotkeys() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [setView],
+    [navigate],
   );
 
   useEffect(() => {

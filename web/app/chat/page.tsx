@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ViewSync } from "@/components/layout/view-sync";
 
 export const metadata: Metadata = {
   title: "Chat",
@@ -6,7 +7,5 @@ export const metadata: Metadata = {
 };
 
 export default function ChatRoute() {
-  // Dynamic import avoids "use client" in the page module
-  const { AppShell } = require("@/components/layout/app-shell");
-  return <AppShell initialView="chat" />;
+  return <ViewSync />;
 }

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { ViewSync } from "@/components/layout/view-sync";
 
 export const metadata: Metadata = {
   title: "Briefing",
@@ -6,6 +7,5 @@ export const metadata: Metadata = {
 };
 
 export default function BriefingRoute() {
-  const { AppShell } = require("@/components/layout/app-shell");
-  return <AppShell initialView="briefing" />;
+  return <ViewSync />;
 }

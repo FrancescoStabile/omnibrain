@@ -1,7 +1,5 @@
-"use client";
-
-import { AppShell } from "@/components/layout/app-shell";
+import { ViewSync } from "@/components/layout/view-sync";
 
 export default function Page() {
-  return <AppShell initialView="home" />;
+  return <ViewSync />;
 }

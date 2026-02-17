@@ -873,6 +873,16 @@ class OmniBrainAPIServer:
 
                 # ── 3. Build system prompt ──
                 system = self._system_prompt
+
+                # Inject current date/time so the LLM never hallucinates it
+                from datetime import datetime
+                now = datetime.now()
+                system += (
+                    f"\n\n## Current Date & Time\n"
+                    f"Today is {now.strftime('%A, %B %d, %Y')}. "
+                    f"Current time: {now.strftime('%H:%M')} (local)."
+                )
+
                 user_name = self._db.get_preference("user_name", "")
                 if user_name:
                     system += f"\n\nThe user's name is {user_name}."

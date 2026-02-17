@@ -181,11 +181,12 @@ class TestProactiveEngine:
 
     def test_register_defaults(self, engine, briefing_gen):
         engine.register_defaults(briefing_generator=briefing_gen)
-        assert len(engine.tasks) == 6
+        assert len(engine.tasks) == 7
         names = [t.name for t in engine.tasks]
         assert "check_emails" in names
         assert "check_calendar" in names
         assert "detect_patterns" in names
+        assert "check_dormant_projects" in names
         assert "morning_briefing" in names
         assert "evening_summary" in names
         assert "weekly_review" in names
@@ -199,7 +200,7 @@ class TestProactiveEngine:
     def test_get_status_with_tasks(self, engine, briefing_gen):
         engine.register_defaults(briefing_generator=briefing_gen)
         status = engine.get_status()
-        assert status["task_count"] == 6
+        assert status["task_count"] == 7
 
     @pytest.mark.asyncio
     async def test_run_task_by_name(self, engine):

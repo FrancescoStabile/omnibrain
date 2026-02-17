@@ -188,6 +188,7 @@ class ProactiveEngine:
         memory_manager: Any = None,
         review_engine: Any = None,
         pattern_detector: Any = None,
+        context_tracker: Any = None,
         check_interval_minutes: int = 5,
         briefing_time: str = "07:00",
         evening_time: str = "22:00",
@@ -201,6 +202,7 @@ class ProactiveEngine:
             memory_manager: MemoryManager instance.
             review_engine: ReviewEngine for evening/weekly summaries.
             pattern_detector: PatternDetector for pattern detection.
+            context_tracker: ContextTracker for dormant project resurrection.
             check_interval_minutes: How often to check emails/calendar.
             briefing_time: Morning briefing time (HH:MM).
             evening_time: Evening summary time (HH:MM).
@@ -211,6 +213,7 @@ class ProactiveEngine:
         self._memory = memory_manager
         self._review_engine = review_engine
         self._pattern_detector = pattern_detector
+        self._context_tracker = context_tracker
 
         # Interval tasks
         self.register_task(ScheduledTask(
@@ -227,6 +230,11 @@ class ProactiveEngine:
             name="detect_patterns",
             handler=self._detect_patterns,
             interval_seconds=3600,  # hourly
+        ))
+        self.register_task(ScheduledTask(
+            name="check_dormant_projects",
+            handler=self._check_dormant_projects,
+            interval_seconds=14400,  # every 4 hours
         ))
 
         # Daily tasks
@@ -528,6 +536,35 @@ class ProactiveEngine:
             self._notify(NotificationLevel.IMPORTANT, "Weekly Review", text[:500])
         except Exception as e:
             logger.error(f"weekly_review failed: {e}")
+
+    async def _check_dormant_projects(self) -> None:
+        """Check for abandoned/dormant projects and notify about resurrection context."""
+        if not self._context_tracker:
+            return
+
+        try:
+            dormant = self._context_tracker.get_dormant_projects()
+            for snapshot in dormant[:3]:  # Limit notifications
+                summary = self._context_tracker.detect_return(snapshot.project)
+                if summary:
+                    msg = (
+                        f"You haven't touched '{summary.project}' in {summary.days_since_last} days."
+                    )
+                    if summary.last_branch:
+                        msg += f" Last branch: {summary.last_branch}."
+                    if summary.blockers:
+                        msg += f" Blockers: {', '.join(summary.blockers[:2])}."
+                    if summary.suggested_next_steps:
+                        msg += f" Suggested: {summary.suggested_next_steps[0]}."
+                    self._notify(
+                        NotificationLevel.FYI,
+                        "Dormant Project",
+                        msg,
+                    )
+            if dormant:
+                logger.info(f"Found {len(dormant)} dormant project(s)")
+        except Exception as e:
+            logger.error(f"check_dormant_projects failed: {e}")
 
     # ── Notification Helper ──
 

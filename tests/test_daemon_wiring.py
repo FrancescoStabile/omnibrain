@@ -30,6 +30,7 @@ def _make_resources_stub() -> ResourceContainer.__class__:
     rc.review_engine = MagicMock()
     rc.approval_gate = MagicMock()
     rc.sanitizer = MagicMock()
+    rc.context_tracker = MagicMock()
     return rc
 
 

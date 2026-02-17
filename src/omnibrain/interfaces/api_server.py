@@ -739,6 +739,43 @@ class OmniBrainAPIServer:
 
             return {"items": items, "total": total, "offset": offset, "limit": limit}
 
+        # ── GET /api/v1/context/resurrection ──
+
+        @app.get("/api/v1/context/resurrection")
+        async def get_context_resurrection(
+            project: str = Query("", description="Specific project name (optional)"),
+            token: str = Depends(verify_api_key),
+        ) -> dict[str, Any]:
+            """Get resurrection context for dormant projects.
+
+            If project is specified, returns context for that project.
+            Otherwise, returns all dormant projects with their summaries.
+            """
+            tracker = getattr(self, "_context_tracker", None)
+            if not tracker:
+                try:
+                    from omnibrain.context_resurrection import ContextTracker
+                    memory = getattr(self, "_memory", None)
+                    tracker = ContextTracker(self._db, memory=memory)
+                except Exception:
+                    return {"projects": [], "error": "Context tracking not available"}
+
+            if project:
+                summary = tracker.detect_return(project)
+                if summary:
+                    return {"project": summary.to_dict(), "dormant": True}
+                # Not dormant — return snapshot anyway
+                snapshot = tracker.get_project_context(project)
+                return {"project": snapshot.to_dict(), "dormant": False}
+
+            # All dormant projects
+            dormant = tracker.get_dormant_projects()
+            results = []
+            for snap in dormant:
+                summary = tracker.detect_return(snap.project)
+                results.append(summary.to_dict() if summary else snap.to_dict())
+            return {"projects": results, "total": len(results)}
+
         # ── POST /api/v1/message ──
 
         @app.post("/api/v1/message", response_model=MessageResponse)
@@ -1040,6 +1077,25 @@ class OmniBrainAPIServer:
 
                 if skill_context:
                     system += skill_context
+
+                # ── 3c. Inject context resurrection if user mentions a project ──
+                tracker = getattr(self, "_context_tracker", None)
+                if tracker and body.message.strip():
+                    try:
+                        all_projects = tracker.get_all_projects()
+                        msg_lower = body.message.lower()
+                        for proj in all_projects:
+                            if proj.lower() in msg_lower:
+                                summary = tracker.detect_return(proj)
+                                if summary:
+                                    system += (
+                                        f"\n\n---\n**Project context for '{proj}'** "
+                                        f"(inactive {summary.days_since_last} days):\n"
+                                        f"{summary.format_text()}"
+                                    )
+                                    break  # Only inject one project
+                    except Exception as e:
+                        logger.warning(f"Context resurrection injection failed: {e}")
 
                 # ── 4. Build messages with conversation history ──
                 messages: list[dict[str, str]] = []

@@ -64,6 +64,7 @@ class ResourceContainer:
         self.review_engine: Any = None
         self.approval_gate: Any = None
         self.sanitizer: Any = None
+        self.context_tracker: Any = None
 
     def initialize(self) -> None:
         """Create all shared resources once."""
@@ -135,6 +136,14 @@ class ResourceContainer:
             logger.info("PromptSanitizer wired")
         except Exception as e:
             logger.warning("Failed to create PromptSanitizer: %s", e)
+
+        # ContextTracker
+        try:
+            from omnibrain.context_resurrection import ContextTracker
+            self.context_tracker = ContextTracker(self.db, memory=self.memory)
+            logger.info("ContextTracker wired")
+        except Exception as e:
+            logger.warning("Failed to create ContextTracker: %s", e)
 
 
 class OmniBrainDaemon:
@@ -426,6 +435,7 @@ class OmniBrainDaemon:
                 memory_manager=rc.memory,
                 review_engine=rc.review_engine,
                 pattern_detector=rc.pattern_detector,
+                context_tracker=rc.context_tracker,
                 check_interval_minutes=self.config.check_interval_minutes,
                 briefing_time=self.config.briefing_time,
                 evening_time=self.config.evening_time,
@@ -528,6 +538,7 @@ class OmniBrainDaemon:
             server._event_bus = self._event_bus  # type: ignore[attr-defined]
             server._approval_gate = rc.approval_gate  # type: ignore[attr-defined]
             server._sanitizer = rc.sanitizer  # type: ignore[attr-defined]
+            server._context_tracker = rc.context_tracker  # type: ignore[attr-defined]
 
             # Wire SkillRuntime into the API server
             if self._skill_runtime:

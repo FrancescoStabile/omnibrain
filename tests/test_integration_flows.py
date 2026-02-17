@@ -562,13 +562,13 @@ class TestProactiveEngineIntegration:
     def test_engine_registers_defaults(self, engine, db):
         gen = BriefingGenerator(db)
         engine.register_defaults(briefing_generator=gen)
-        assert len(engine.tasks) == 6  # emails, calendar, patterns, morning, evening, weekly
+        assert len(engine.tasks) == 7  # emails, calendar, patterns, dormant_projects, morning, evening, weekly
 
     def test_engine_status(self, engine, db):
         gen = BriefingGenerator(db)
         engine.register_defaults(briefing_generator=gen)
         status = engine.get_status()
-        assert status["task_count"] == 6
+        assert status["task_count"] == 7
         assert not status["running"]
 
     @pytest.mark.asyncio

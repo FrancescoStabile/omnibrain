@@ -19,15 +19,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from omnibrain.auth.google_oauth import CALENDAR_SCOPES
+from omnibrain.integrations import _is_auth_error
 from omnibrain.models import CalendarEvent
 
 logger = logging.getLogger("omnibrain.integrations.calendar")
-
-# Calendar API scopes — full read/write access
-CALENDAR_SCOPES = [
-    "https://www.googleapis.com/auth/calendar",
-    "https://www.googleapis.com/auth/calendar.readonly",  # kept for backward compat with existing tokens
-]
 
 
 class CalendarAuthError(Exception):
@@ -454,9 +450,4 @@ def _parse_event_time(time_data: dict[str, str]) -> datetime | None:
     return None
 
 
-def _is_auth_error(error: Exception) -> bool:
-    """Check if an API error is authentication-related."""
-    error_str = str(error).lower()
-    return any(indicator in error_str for indicator in [
-        "invalid_grant", "token expired", "401", "unauthorized",
-    ])
+# _is_auth_error is imported from omnibrain.integrations (shared helper)

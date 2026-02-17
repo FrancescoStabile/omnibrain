@@ -465,7 +465,7 @@ class ProactiveEngine:
                                 NotificationLevel.FYI,
                                 "Pattern Detected",
                                 f"'{p.pattern_type}': {p.description} "
-                                f"(seen {p.occurrence_count}x, strength: {p.strength})",
+                                f"(seen {p.occurrences}x, strength: {p.strength})",
                             )
                     if patterns:
                         logger.info(

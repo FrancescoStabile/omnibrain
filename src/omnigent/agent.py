@@ -42,7 +42,7 @@ from omnigent.extractors import run_extractor
 from omnigent.knowledge_loader import get_relevant_knowledge
 from omnigent.planner import generate_phase_reflection, generate_plan, generate_plan_with_llm
 from omnigent.reasoning_graph import ReasoningGraph
-from omnigent.reflection import reflect_on_result, reflect_on_result_async
+from omnigent.reflection import reflect_on_result_async
 from omnigent.registry import DomainRegistry
 from omnigent.router import LLMRouter, Provider, TaskType
 from omnigent.state import Finding, State
@@ -314,7 +314,7 @@ class Agent:
         # Escalation chains for confirmed findings
         confirmed = self.state.profile.get_confirmed()
         for hyp in confirmed[:3]:  # Limit to avoid token bloat
-            chain_text = format_chain_for_prompt(hyp.hypothesis_type)
+            chain_text = format_chain_for_prompt(hyp.hypothesis_type, chains=self.registry.chains)
             if chain_text:
                 parts.append("\n" + chain_text)
 
@@ -332,7 +332,7 @@ class Agent:
             if cp:
                 current_phase = cp.name.lower()
 
-        knowledge = get_relevant_knowledge(self.state.profile, current_phase)
+        knowledge = get_relevant_knowledge(self.state.profile, current_phase, knowledge_map=self.registry.knowledge_map)
         if knowledge:
             parts.append("\n\n---\n\n## Relevant Knowledge\n\n" + knowledge)
 
@@ -461,7 +461,7 @@ class Agent:
         """
         # Extractor
         try:
-            run_extractor(tc["name"], self.state.profile, result, tc.get("arguments", {}))
+            run_extractor(tc["name"], self.state.profile, result, tc.get("arguments", {}), extractors=self.registry.extractors)
         except Exception as e:
             logger.warning(f"Extractor failed for {tc['name']}: {e}")
 
@@ -484,7 +484,7 @@ class Agent:
         # Async reflection (supports both sync and async reflectors)
         reflection_text = None
         try:
-            r = await reflect_on_result_async(tc["name"], tc["arguments"], result, self.state.profile)
+            r = await reflect_on_result_async(tc["name"], tc["arguments"], result, self.state.profile, reflectors=self.registry.reflectors)
             if r:
                 reflection_text = r
         except Exception as e:
@@ -493,7 +493,7 @@ class Agent:
         # Recovery guidance
         guidance = None
         if self._is_failure(tc["name"], result):
-            guidance = inject_recovery_guidance(tc["name"], result)
+            guidance = inject_recovery_guidance(tc["name"], result, error_patterns=self.registry.error_patterns)
 
         return tool_result_content, reflection_text, guidance
 
@@ -568,10 +568,10 @@ class Agent:
         if not self.state.plan.objective or self.state.plan.is_complete():
             try:
                 self.state.plan = await generate_plan_with_llm(
-                    user_input, self.state.profile, self.router
+                    user_input, self.state.profile, self.router, plan_templates=self.registry.plan_templates
                 )
             except Exception:
-                self.state.plan = generate_plan(user_input, self.state.profile)
+                self.state.plan = generate_plan(user_input, self.state.profile, plan_templates=self.registry.plan_templates)
             yield AgentEvent("plan_generated", plan=self.state.plan.to_prompt_summary())
 
         try:
@@ -723,7 +723,7 @@ class Agent:
                             if self.state.plan and self.state.plan.needs_replan():
                                 try:
                                     self.state.plan = await generate_plan_with_llm(
-                                        self.state.plan.objective, self.state.profile, self.router
+                                        self.state.plan.objective, self.state.profile, self.router, plan_templates=self.registry.plan_templates
                                     )
                                     yield AgentEvent("plan_generated", plan=self.state.plan.to_prompt_summary())
                                 except Exception:
@@ -821,15 +821,6 @@ class Agent:
             "connection refused",
         ]
         return any(ind in result_lower for ind in failure_indicators)
-
-    def _extract_finding(self, text: str) -> Finding | None:
-        """Extract first finding from agent text (returns first for backward compat).
-
-        Looks for pattern: [FINDING: SEVERITY] Title
-        Override for custom finding patterns.
-        """
-        findings = self._extract_all_findings(text)
-        return findings[0] if findings else None
 
     def _extract_all_findings(self, text: str) -> list[Finding]:
         """Extract ALL findings from agent text.
@@ -1014,11 +1005,3 @@ class Agent:
             logger.debug(f"Cleanup warnings: {'; '.join(errors)}")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Convenience
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-async def create_agent(**kwargs) -> Agent:
-    """Create and initialize agent."""
-    return Agent(**kwargs)

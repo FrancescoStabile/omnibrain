@@ -9,7 +9,6 @@ import pytest
 from omnigent.context import (
     _group_messages,
     smart_trim_context,
-    trim_context_window,
 )
 
 
@@ -94,8 +93,8 @@ class TestGroupMessages:
         assert len(groups[2]) == 2
 
 
-class TestTrimContextWindowAtomic:
-    """Verify trim_context_window never splits atomic groups."""
+class TestTrimContextAtomic:
+    """Verify context trimming never splits atomic groups."""
 
     def _make_tool_group(self, index: int) -> list[dict]:
         """Create an assistant+tool atomic group."""
@@ -108,26 +107,6 @@ class TestTrimContextWindowAtomic:
             },
             {"role": "tool", "content": {"tool_call_id": f"tc_{index}", "content": f"result {index}"}},
         ]
-
-    def test_atomic_groups_preserved_during_trim(self):
-        """After trimming, no assistant+tool_use message should lack its tool result."""
-        msgs = [{"role": "user", "content": "initial"}]
-        for i in range(20):
-            msgs.extend(self._make_tool_group(i))
-
-        result = trim_context_window(msgs, max_messages=10, preserve_first=1)
-
-        # Verify: every assistant with tool_use is followed by its tool result
-        for idx, msg in enumerate(result):
-            if msg.get("role") == "assistant" and isinstance(msg.get("content"), list):
-                has_tool_use = any(
-                    isinstance(item, dict) and item.get("type") == "tool_use"
-                    for item in msg["content"]
-                )
-                if has_tool_use:
-                    # Next message(s) must be tool messages
-                    assert idx + 1 < len(result), "Assistant with tool_use has no following tool message"
-                    assert result[idx + 1].get("role") == "tool"
 
     def test_smart_trim_preserves_atomic_groups(self):
         """smart_trim_context also preserves assistant+tool groups."""
@@ -147,20 +126,3 @@ class TestTrimContextWindowAtomic:
                 if has_tool_use:
                     assert idx + 1 < len(result), "Atomic group split: tool_use without tool result"
                     assert result[idx + 1].get("role") == "tool"
-
-    def test_tool_message_never_orphaned(self):
-        """A tool message should never appear without a preceding assistant+tool_use."""
-        msgs = [{"role": "user", "content": "go"}]
-        for i in range(10):
-            msgs.extend(self._make_tool_group(i))
-
-        result = trim_context_window(msgs, max_messages=8, preserve_first=1)
-
-        for idx, msg in enumerate(result):
-            if msg.get("role") == "tool":
-                # Must be preceded by assistant with tool_use or another tool message
-                assert idx > 0, "Tool message at index 0"
-                prev = result[idx - 1]
-                assert prev.get("role") in ("assistant", "tool"), (
-                    f"Tool message at index {idx} not preceded by assistant or tool"
-                )

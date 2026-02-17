@@ -36,54 +36,6 @@ def set_tokenizer(fn: Callable[[str], int] | None) -> None:
     _custom_tokenizer = fn
 
 
-def trim_context_window(
-    messages: list[dict[str, Any]],
-    max_messages: int = 20,
-    preserve_first: int = 2,
-) -> list[dict[str, Any]]:
-    """
-    Trim conversation history to recent messages.
-
-    CRITICAL: Preserves assistant+tools sequences to avoid breaking API validation.
-
-    Strategy:
-    1. Identify all message "groups" (user, assistant, assistant+tools)
-    2. Never split an assistant+tools group
-    3. Keep first N groups + last M groups within budget
-    """
-    if len(messages) <= max_messages:
-        return messages
-
-    groups = _group_messages(messages)
-
-    if len(groups) <= 2:
-        return messages
-
-    first_groups_count = 0
-    first_msgs_count = 0
-    while first_groups_count < len(groups) and first_msgs_count < preserve_first:
-        first_msgs_count += len(groups[first_groups_count])
-        first_groups_count += 1
-
-    first_msgs = _flatten_groups(groups[:first_groups_count])
-
-    remaining_budget = max_messages - len(first_msgs)
-    if remaining_budget <= 0:
-        return first_msgs[:max_messages]
-
-    recent_groups = []
-    recent_msgs_count = 0
-    for g in reversed(groups[first_groups_count:]):
-        if recent_msgs_count + len(g) <= remaining_budget:
-            recent_groups.insert(0, g)
-            recent_msgs_count += len(g)
-        else:
-            break
-
-    recent_msgs = _flatten_groups(recent_groups)
-    return first_msgs + recent_msgs
-
-
 def smart_trim_context(
     messages: list[dict[str, Any]],
     max_tokens: int = 80000,
@@ -210,106 +162,6 @@ def _summarize_tool_result(result: str, max_chars: int = 300) -> str:
     return result[:max_chars] + f"\n[... {len(result) - max_chars} chars compressed ...]"
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Semantic Context Compression (LLM-based)
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-async def semantic_compress_messages(
-    messages: list[dict[str, Any]],
-    router: Any,
-    max_tokens: int = 80000,
-    recent_window: int = 12,
-) -> list[dict[str, Any]]:
-    """Compress old messages using LLM-based summarization.
-
-    Unlike heuristic trimming, this uses a cheap/fast LLM to summarize
-    old tool results and conversations while preserving key facts.
-
-    Strategy:
-    1. Keep recent_window messages intact.
-    2. For older messages, group tool results and summarize them via LLM.
-    3. Replace the original messages with a single summary message.
-
-    Args:
-        messages: Conversation messages.
-        router: LLMRouter instance for summarization calls.
-        max_tokens: Token budget.
-        recent_window: Number of recent messages to preserve intact.
-
-    Returns:
-        Compressed message list.
-    """
-    total_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages)
-    if total_tokens <= max_tokens:
-        return messages
-
-    # Split into old and recent
-    groups = _group_messages(messages)
-    if len(groups) <= 3:
-        return messages
-
-    recent_count = min(recent_window // 2, len(groups) - 1)
-    old_groups = groups[:-recent_count] if recent_count > 0 else groups
-    recent_groups = groups[-recent_count:] if recent_count > 0 else []
-
-    # Collect old tool results for summarization
-    old_content_parts: list[str] = []
-    for group in old_groups:
-        for msg in group:
-            role = msg.get("role", "")
-            content = msg.get("content", "")
-            if isinstance(content, str) and content:
-                old_content_parts.append(f"[{role}]: {content[:500]}")
-            elif isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict):
-                        text = item.get("text", "") or item.get("content", "")
-                        if text:
-                            old_content_parts.append(f"[{role}]: {str(text)[:500]}")
-
-    if not old_content_parts:
-        return messages
-
-    # Build summarization prompt
-    old_text = "\n".join(old_content_parts[:50])  # Cap at 50 entries
-    summary_prompt = (
-        "Summarize the following conversation history into a concise factual summary. "
-        "Keep all key findings, tool results, decisions, and important details. "
-        "Omit verbose tool output and repetitive content. "
-        "Output ONLY the summary, no commentary.\n\n"
-        f"{old_text}"
-    )
-
-    try:
-        from omnigent.router import TaskType
-        summary_text = ""
-        import asyncio
-        async with asyncio.timeout(30):
-            async for chunk in router.stream(
-                messages=[{"role": "user", "content": summary_prompt}],
-                tools=None,
-                system="You are a concise summarizer. Extract key facts only.",
-                task_type=TaskType.REFLECTION,
-            ):
-                if chunk.content:
-                    summary_text += chunk.content
-                if chunk.done:
-                    break
-
-        if summary_text:
-            summary_msg = {
-                "role": "user",
-                "content": f"[CONTEXT SUMMARY of {len(old_groups)} earlier message groups]:\n{summary_text}",
-            }
-            return [summary_msg] + _flatten_groups(recent_groups)
-    except Exception:
-        pass
-
-    # Fallback to heuristic compression
-    return smart_trim_context(messages, max_tokens=max_tokens, recent_window=recent_window)
-
-
 def estimate_tokens(content: Any) -> int:
     """Estimate token count for content (~1 token ≈ 3 characters).
 
@@ -329,18 +181,6 @@ def estimate_tokens(content: Any) -> int:
     elif isinstance(content, dict):
         return sum(estimate_tokens(v) for v in content.values())
     return 0
-
-
-def calculate_context_cost(
-    messages: list[dict[str, Any]],
-    system_prompt: str,
-    cost_per_1k_tokens: float = 0.00014,
-) -> float:
-    """Calculate input token cost for current context."""
-    system_tokens = estimate_tokens(system_prompt)
-    message_tokens = sum(estimate_tokens(msg.get("content", "")) for msg in messages)
-    total_tokens = system_tokens + message_tokens
-    return (total_tokens / 1000) * cost_per_1k_tokens
 
 
 def should_trim_context(

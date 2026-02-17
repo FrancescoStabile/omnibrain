@@ -23,6 +23,7 @@ computes aggregate stats, detects trends, and formats human-readable output.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -406,7 +407,6 @@ class ReviewEngine:
 
         # Parse date range
         day_start = f"{date}T00:00:00"
-        day_end = f"{date}T23:59:59"
         since = datetime.fromisoformat(day_start)
 
         try:
@@ -492,7 +492,6 @@ class ReviewEngine:
                     contacts[sender] = contacts.get(sender, 0) + 1
                 attendees = meta.get("attendees", [])
                 if isinstance(attendees, str):
-                    import json
                     try:
                         attendees = json.loads(attendees)
                     except (ValueError, TypeError):
@@ -523,7 +522,6 @@ class ReviewEngine:
                     contacts[sender] = contacts.get(sender, 0) + 1
                 attendees = meta.get("attendees", [])
                 if isinstance(attendees, str):
-                    import json
                     try:
                         attendees = json.loads(attendees)
                     except (ValueError, TypeError):
@@ -682,7 +680,6 @@ class ReviewEngine:
 
 def _parse_meta(event: dict[str, Any]) -> dict[str, Any]:
     """Parse metadata from event dict."""
-    import json
     meta = event.get("metadata")
     if isinstance(meta, str):
         try:

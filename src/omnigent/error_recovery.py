@@ -62,17 +62,18 @@ ERROR_PATTERNS: dict[str, dict] = {}
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def get_recovery_strategy(tool_name: str, error_result: str) -> RecoveryStrategy | None:
+def get_recovery_strategy(tool_name: str, error_result: str, *, error_patterns: dict[str, dict] | None = None) -> RecoveryStrategy | None:
     """Match error result against known patterns and return recovery strategy.
 
     Args:
         tool_name: Name of the tool that failed
         error_result: The error output from the tool
+        error_patterns: Optional override for the global ERROR_PATTERNS dict
 
     Returns:
         RecoveryStrategy if pattern matched, None otherwise
     """
-    tool_patterns = ERROR_PATTERNS.get(tool_name, {})
+    tool_patterns = (error_patterns or ERROR_PATTERNS).get(tool_name, {})
     error_lower = error_result.lower()
 
     for pattern_name, pattern_data in tool_patterns.items():
@@ -83,17 +84,18 @@ def get_recovery_strategy(tool_name: str, error_result: str) -> RecoveryStrategy
     return None
 
 
-def inject_recovery_guidance(tool_name: str, error_result: str) -> str:
+def inject_recovery_guidance(tool_name: str, error_result: str, *, error_patterns: dict[str, dict] | None = None) -> str:
     """Generate recovery guidance prompt to inject after tool failure.
 
     Args:
         tool_name: Name of the tool that failed
         error_result: The error output from the tool
+        error_patterns: Optional override for the global ERROR_PATTERNS dict
 
     Returns:
         Formatted prompt with recovery guidance
     """
-    strategy = get_recovery_strategy(tool_name, error_result)
+    strategy = get_recovery_strategy(tool_name, error_result, error_patterns=error_patterns)
 
     if not strategy:
         # Generic failure guidance

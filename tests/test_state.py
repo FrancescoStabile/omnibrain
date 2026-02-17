@@ -112,14 +112,6 @@ class TestState:
         assert len(s.get_findings_by_severity("low")) == 1
         assert len(s.get_findings_by_severity("critical")) == 0
 
-    def test_critical_and_high_count(self):
-        s = State()
-        s.add_finding(Finding(title="A", severity="critical"))
-        s.add_finding(Finding(title="B", severity="critical"))
-        s.add_finding(Finding(title="C", severity="high"))
-        assert s.critical_count == 2
-        assert s.high_count == 1
-
     def test_clear(self):
         s = State(subject="test")
         s.add_message("user", "hello")

@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable
 
-from omnibrain.models import ContactInfo, EmailMessage, EventSource
+from omnibrain.models import ContactInfo, EventSource
 
 logger = logging.getLogger("omnibrain.extractors")
 
@@ -139,7 +139,7 @@ def extract_classification(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Calendar Extractors (stub — Phase 1 Day 5-6)
+# Calendar Extractors
 # ═══════════════════════════════════════════════════════════════════════════
 
 

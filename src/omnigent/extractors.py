@@ -55,12 +55,12 @@ EXTRACTORS: dict[str, Any] = {}
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def run_extractor(tool_name: str, profile: DomainProfile, result: str, args: dict):
+def run_extractor(tool_name: str, profile: DomainProfile, result: str, args: dict, *, extractors: dict[str, Any] | None = None):
     """Run the appropriate extractor for a tool result.
 
     Never raises — all errors are caught and logged.
     """
-    extractor = EXTRACTORS.get(tool_name)
+    extractor = (extractors or EXTRACTORS).get(tool_name)
     if not extractor:
         return
 

@@ -9,6 +9,8 @@
 
 import { useState, useCallback, type KeyboardEvent } from "react";
 import { Brain, Search, ExternalLink, Clock, Loader2, Sparkles } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { api, type KnowledgeReference } from "@/lib/api";
 import { Card, CardBody } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -181,7 +183,9 @@ export function KnowledgePage() {
                 <div className="flex items-start gap-3">
                   <Brain className="mt-0.5 h-5 w-5 text-primary shrink-0" />
                   <div>
-                    <p className="text-sm leading-relaxed whitespace-pre-wrap">{result.summary}</p>
+                    <div className="prose prose-sm dark:prose-invert max-w-none leading-relaxed">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{result.summary}</ReactMarkdown>
+                    </div>
                     {result.source_count != null && (
                       <p className="mt-2 text-xs text-muted-foreground">
                         Based on {result.source_count} sources
@@ -201,7 +205,9 @@ export function KnowledgePage() {
                 {result.references.map((ref, i) => (
                   <Card key={i} className="transition-colors hover:bg-accent/50">
                     <CardBody className="p-3">
-                      <p className="text-sm">{ref.text}</p>
+                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{ref.text}</ReactMarkdown>
+                      </div>
                       <div className="mt-1.5 flex items-center gap-2">
                         <Badge className="bg-muted text-muted-foreground text-[10px]">{ref.source}</Badge>
                         {ref.date && <span className="text-xs text-muted-foreground">{ref.date}</span>}

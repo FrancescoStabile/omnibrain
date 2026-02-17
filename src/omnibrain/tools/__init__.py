@@ -4,7 +4,7 @@ Available tools:
     email_tools    — fetch_emails, classify_email, search_emails, draft_email
     calendar_tools — get_today_events, get_upcoming_events, generate_meeting_brief
     memory_tools   — search_memory, store_observation
-    action_tools   — (Phase 1 Day 13-14)
+    action_tools   — action execution and approval workflows
 """
 
 from omnibrain.tools.email_tools import (

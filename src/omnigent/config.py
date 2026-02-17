@@ -98,15 +98,6 @@ class Config:
             logger.debug(f"Keyring set failed for {key}: {e}")
             return False
 
-    def _try_keyring_delete(self, key: str) -> bool:
-        """Try to delete a value from OS keyring."""
-        try:
-            import keyring
-            keyring.delete_password("omnigent", key)
-            return True
-        except (ImportError, Exception):
-            return False
-
     def _apply_env_overrides(self):
         """Apply overrides: ENV > keyring > file config."""
         for key in self.API_KEY_NAMES:

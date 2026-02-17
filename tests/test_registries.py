@@ -3,10 +3,10 @@
 import pytest
 from omnigent.chains import CHAINS, ChainStep, get_escalation_chain, format_chain_for_prompt
 from omnigent.extractors import EXTRACTORS, run_extractor
-from omnigent.reflection import REFLECTORS, reflect_on_result
+from omnigent.reflection import REFLECTORS, reflect_on_result_async
 from omnigent.error_recovery import ERROR_PATTERNS, RecoveryStrategy, get_recovery_strategy
 from omnigent.knowledge_loader import KNOWLEDGE_MAP, PHASE_BUDGETS
-from omnigent.few_shot_examples import EXAMPLES, ToolExample, get_examples, format_examples_for_prompt
+from omnigent.few_shot_examples import EXAMPLES, ToolExample, get_examples
 
 
 class TestChains:
@@ -50,10 +50,11 @@ class TestReflectors:
     def test_empty_by_default(self):
         assert isinstance(REFLECTORS, dict)
 
-    def test_reflect_on_result_no_reflectors(self):
+    @pytest.mark.asyncio
+    async def test_reflect_on_result_no_reflectors(self):
         from omnigent.domain_profile import DomainProfile
         profile = DomainProfile()
-        result = reflect_on_result("some_tool", {}, "some output", profile)
+        result = await reflect_on_result_async("some_tool", {}, "some output", profile)
         assert isinstance(result, str)
 
 
@@ -101,7 +102,7 @@ class TestFewShotExamples:
         result = get_examples("nonexistent_tool_xyz")
         assert result == [] or result is None
 
-    def test_format_examples(self):
+    def test_get_examples_registered(self):
         # Register a temporary example
         EXAMPLES["_test_tool"] = [
             ToolExample(
@@ -113,8 +114,8 @@ class TestFewShotExamples:
                 is_good=True,
             ),
         ]
-        text = format_examples_for_prompt("_test_tool")
-        assert isinstance(text, str)
-        assert len(text) > 0
+        results = get_examples("_test_tool")
+        assert len(results) == 1
+        assert results[0].scenario == "Test"
         # Cleanup
         del EXAMPLES["_test_tool"]

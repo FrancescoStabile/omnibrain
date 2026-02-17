@@ -18,6 +18,8 @@ import argparse
 import asyncio
 import sys
 
+from rich.console import Console
+
 from omnibrain import __version__
 
 
@@ -141,8 +143,6 @@ def _cmd_start(args: argparse.Namespace) -> None:
 
 def _cmd_status() -> None:
     """Show daemon status."""
-    from rich.console import Console
-
     from omnibrain.config import OmniBrainConfig
     from omnibrain.db import OmniBrainDB
 
@@ -162,7 +162,6 @@ def _cmd_status() -> None:
 
 def _cmd_briefing() -> None:
     """Generate and display morning briefing."""
-    from rich.console import Console
     from rich.markdown import Markdown
 
     from omnibrain.briefing import BriefingGenerator
@@ -197,7 +196,6 @@ def _cmd_briefing() -> None:
 
 def _cmd_search(query: str, limit: int) -> None:
     """Semantic search across memory."""
-    from rich.console import Console
     from rich.table import Table
 
     from omnibrain.config import OmniBrainConfig
@@ -237,7 +235,6 @@ def _cmd_search(query: str, limit: int) -> None:
 
 def _cmd_proposals() -> None:
     """List pending proposals."""
-    from rich.console import Console
     from rich.table import Table
 
     from omnibrain.config import OmniBrainConfig
@@ -269,8 +266,6 @@ def _cmd_proposals() -> None:
 
 def _cmd_approve(proposal_id: str) -> None:
     """Approve a proposal."""
-    from rich.console import Console
-
     from omnibrain.config import OmniBrainConfig
     from omnibrain.db import OmniBrainDB
 
@@ -286,8 +281,6 @@ def _cmd_approve(proposal_id: str) -> None:
 
 def _cmd_reject(proposal_id: str) -> None:
     """Reject a proposal."""
-    from rich.console import Console
-
     from omnibrain.config import OmniBrainConfig
     from omnibrain.db import OmniBrainDB
 
@@ -327,7 +320,6 @@ def _cmd_logs() -> None:
 
 def _cmd_fetch_emails(args: argparse.Namespace) -> None:
     """Fetch and display recent emails from Gmail."""
-    from rich.console import Console
     from rich.table import Table
 
     from omnibrain.config import OmniBrainConfig
@@ -433,7 +425,6 @@ def _cmd_setup_google() -> None:
 
 def _cmd_today() -> None:
     """Show today's calendar events."""
-    from rich.console import Console
     from rich.table import Table
 
     from omnibrain.config import OmniBrainConfig
@@ -492,7 +483,6 @@ def _cmd_today() -> None:
 
 def _cmd_upcoming(args: argparse.Namespace) -> None:
     """Show upcoming calendar events."""
-    from rich.console import Console
     from rich.table import Table
 
     from omnibrain.config import OmniBrainConfig

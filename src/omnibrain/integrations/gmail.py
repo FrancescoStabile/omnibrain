@@ -22,14 +22,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from omnibrain.auth.google_oauth import GMAIL_SCOPES
+from omnibrain.integrations import _is_auth_error
 from omnibrain.models import EmailMessage
 
 logger = logging.getLogger("omnibrain.integrations.gmail")
-
-# Gmail API scopes — Phase 1 is read-only
-GMAIL_SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
-]
 
 # Maximum batch size per API call
 MAX_BATCH_SIZE = 100
@@ -349,7 +346,6 @@ class GmailClient:
         if not self.is_authenticated:
             raise GmailAuthError("Not authenticated")
 
-        import base64
         from email.mime.text import MIMEText
 
         msg = MIMEText(body)
@@ -418,7 +414,6 @@ class GmailClient:
         if not self.is_authenticated:
             raise GmailAuthError("Not authenticated")
 
-        import base64
         from email.mime.text import MIMEText
 
         msg = MIMEText(body)
@@ -651,14 +646,4 @@ def _strip_html(html: str) -> str:
     return text.strip()
 
 
-def _is_auth_error(error: Exception) -> bool:
-    """Check if an API error is authentication-related."""
-    error_str = str(error).lower()
-    return any(indicator in error_str for indicator in [
-        "invalid_grant",
-        "token expired",
-        "token has been expired",
-        "401",
-        "invalid credentials",
-        "unauthorized",
-    ])
+# _is_auth_error is imported from omnibrain.integrations (shared helper)

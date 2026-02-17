@@ -57,29 +57,4 @@ def get_examples(tool_name: str) -> list[ToolExample]:
     return EXAMPLES.get(tool_name, [])
 
 
-def format_examples_for_prompt(tool_name: str, max_examples: int = 3) -> str:
-    """Format few-shot examples as prompt text for a tool.
 
-    Returns:
-        Formatted examples string, or empty string if no examples exist.
-    """
-    examples = get_examples(tool_name)
-    if not examples:
-        return ""
-
-    lines = [f"\n## Examples for `{tool_name}`\n"]
-
-    for ex in examples[:max_examples]:
-        label = "✓ GOOD" if ex.is_good else "✗ BAD"
-        lines.append(f"### {label}: {ex.scenario}")
-        lines.append(f"**Thinking**: {ex.thinking.strip()}")
-        lines.append(f"**Tool**: {ex.tool_name}({ex.tool_args})")
-        lines.append(f"**Expected**: {ex.expected_result}")
-        lines.append("")
-
-    return "\n".join(lines)
-
-
-def get_all_examples() -> dict[str, list[ToolExample]]:
-    """Get all registered examples."""
-    return EXAMPLES.copy()

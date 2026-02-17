@@ -150,23 +150,13 @@ class State:
     started_at: datetime = field(default_factory=datetime.now)
     iteration: int = 0
 
-    # Incremental token tracking
-    _total_tokens: int = 0
-
     # Enrichment hook — set this to your domain's enrichment function
     enrich_fn: EnrichFn | None = None
 
     def add_message(self, role: str, content: str | list):
-        """Add message to history with incremental token tracking."""
-        from omnigent.context import estimate_tokens
+        """Add message to history."""
         self.messages.append({"role": role, "content": content})
-        self._total_tokens += estimate_tokens(content)
         self.iteration += 1
-
-    @property
-    def total_tokens(self) -> int:
-        """Get accumulated token count (O(1) instead of recalculating)."""
-        return self._total_tokens
 
     def add_finding(self, finding: Finding):
         """Add finding with optional auto-enrichment via hook."""
@@ -180,14 +170,6 @@ class State:
     def get_findings_by_severity(self, severity: str) -> list[Finding]:
         return [f for f in self.findings if f.severity == severity]
 
-    @property
-    def critical_count(self) -> int:
-        return len(self.get_findings_by_severity("critical"))
-
-    @property
-    def high_count(self) -> int:
-        return len(self.get_findings_by_severity("high"))
-
     def clear(self):
         """Clear state for new session."""
         self.messages.clear()
@@ -196,5 +178,4 @@ class State:
         self.profile = DomainProfile()
         self.plan = TaskPlan(objective="")
         self.iteration = 0
-        self._total_tokens = 0
         self.started_at = datetime.now()

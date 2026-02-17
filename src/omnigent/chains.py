@@ -50,7 +50,7 @@ CHAINS: dict[str, list[ChainStep]] = {}
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def get_escalation_chain(category: str) -> list[ChainStep] | None:
+def get_escalation_chain(category: str, *, chains: dict[str, list[ChainStep]] | None = None) -> list[ChainStep] | None:
     """Get the escalation chain for a finding category.
 
     Matching strategy (in order):
@@ -60,23 +60,24 @@ def get_escalation_chain(category: str) -> list[ChainStep] | None:
 
     Returns None if no chain exists.
     """
+    source = chains or CHAINS
     normalized = category.lower().strip().replace(" ", "_").replace("-", "_")
 
     # 1. Direct match
-    if normalized in CHAINS:
-        return CHAINS[normalized]
+    if normalized in source:
+        return source[normalized]
 
     # 2. Partial match
-    for key, chain in CHAINS.items():
+    for key, chain in source.items():
         if key in normalized or normalized in key:
             return chain
 
     return None
 
 
-def format_chain_for_prompt(category: str) -> str:
+def format_chain_for_prompt(category: str, *, chains: dict[str, list[ChainStep]] | None = None) -> str:
     """Format an escalation chain as prompt text."""
-    chain = get_escalation_chain(category)
+    chain = get_escalation_chain(category, chains=chains)
     if not chain:
         return ""
 

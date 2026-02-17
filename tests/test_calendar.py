@@ -851,13 +851,11 @@ class TestApprovalGate:
     """Verify calendar tools are in pre-approved set."""
 
     def test_calendar_tools_preapproved(self):
-        from omnibrain.models import ApprovalGate
+        from omnibrain.approval import DEFAULT_APPROVAL_MAP, ApprovalLevel
 
-        assert ApprovalGate.needs_approval("get_today_events") is False
-        assert ApprovalGate.needs_approval("get_upcoming_events") is False
-        assert ApprovalGate.needs_approval("generate_meeting_brief") is False
+        assert DEFAULT_APPROVAL_MAP.get("get_calendar") == ApprovalLevel.PRE_APPROVED
 
     def test_create_event_needs_approval(self):
-        from omnibrain.models import ApprovalGate
+        from omnibrain.approval import DEFAULT_APPROVAL_MAP, ApprovalLevel
 
-        assert ApprovalGate.needs_approval("create_event") is True
+        assert DEFAULT_APPROVAL_MAP.get("create_calendar_event") == ApprovalLevel.NEEDS_APPROVAL

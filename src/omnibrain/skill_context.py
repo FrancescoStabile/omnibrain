@@ -364,11 +364,7 @@ class SkillContext:
         if not self._db:
             return
         try:
-            with self._db._connect() as conn:
-                conn.execute(
-                    "DELETE FROM preferences WHERE key = ?",
-                    (f"skill:{self.skill_name}:{key}",),
-                )
+            self._db.delete_preference(f"skill:{self.skill_name}:{key}")
         except Exception as e:
             logger.warning(f"[{self.skill_name}] delete_data failed: {e}")
 

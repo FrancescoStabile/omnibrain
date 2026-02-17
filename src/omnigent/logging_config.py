@@ -95,7 +95,3 @@ def setup_logging(verbose: bool = False, logger_name: str = "omnigent"):
 
     return root_logger
 
-
-def get_logger(name: str) -> logging.Logger:
-    """Get a logger for a specific module."""
-    return logging.getLogger(f"omnigent.{name}")

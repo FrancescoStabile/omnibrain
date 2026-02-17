@@ -306,17 +306,17 @@ def detect_subject_type(profile: DomainProfile) -> str:
     return "default"
 
 
-def generate_plan(objective: str, profile: DomainProfile) -> TaskPlan:
+def generate_plan(objective: str, profile: DomainProfile, *, plan_templates: dict[str, list[dict]] | None = None) -> TaskPlan:
     """Generate a plan based on objective and profile.
 
     Uses PLAN_TEMPLATES if available, otherwise returns a minimal plan.
     This is the synchronous fallback when no LLM router is available.
     """
     template_key = detect_subject_type(profile)
-    template = PLAN_TEMPLATES.get(template_key)
+    template = (plan_templates or PLAN_TEMPLATES).get(template_key)
 
     if template:
-        return _template_to_plan(template_key, objective)
+        return _template_to_plan(template_key, objective, plan_templates=plan_templates)
 
     # Minimal fallback plan
     plan = TaskPlan(objective=objective)
@@ -338,9 +338,9 @@ def generate_plan(objective: str, profile: DomainProfile) -> TaskPlan:
     return plan
 
 
-def _template_to_plan(template_key: str, objective: str) -> TaskPlan:
+def _template_to_plan(template_key: str, objective: str, *, plan_templates: dict[str, list[dict]] | None = None) -> TaskPlan:
     """Convert a PLAN_TEMPLATES entry into a live TaskPlan."""
-    template = PLAN_TEMPLATES.get(template_key, [])
+    template = (plan_templates or PLAN_TEMPLATES).get(template_key, [])
     plan = TaskPlan(objective=objective)
 
     for phase_def in template:
@@ -448,6 +448,8 @@ async def generate_plan_with_llm(
     objective: str,
     profile: DomainProfile,
     router: LLMRouter,
+    *,
+    plan_templates: dict[str, list[dict]] | None = None,
 ) -> TaskPlan:
     """Generate a profile-aware plan using LLM refinement.
 
@@ -459,7 +461,7 @@ async def generate_plan_with_llm(
     from omnigent.router import TaskType
 
     subject_type = detect_subject_type(profile)
-    base_plan = generate_plan(objective, profile)
+    base_plan = generate_plan(objective, profile, plan_templates=plan_templates)
 
     # Serialise template + profile for the LLM
     profile_summary = profile.to_prompt_summary()
@@ -542,3 +544,4 @@ async def generate_plan_with_llm(
     except Exception as e:
         logger.warning(f"LLM planner failed ({e}), falling back to template '{subject_type}'")
         return base_plan
+

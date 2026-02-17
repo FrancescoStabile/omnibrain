@@ -444,8 +444,29 @@ class OmniBrainDB:
         with self._connect() as conn:
             conn.execute("UPDATE events SET processed = 1 WHERE id = ?", (event_id,))
 
+    @staticmethod
+    def _sanitize_fts_query(query: str) -> str:
+        """Sanitize a query string for FTS5 MATCH syntax.
+
+        Strips special characters and joins words with AND for
+        precise matching.  Returns empty string if nothing usable.
+        """
+        cleaned = ""
+        for c in query:
+            if c.isalnum() or c in " .-_@":
+                cleaned += c
+            else:
+                cleaned += " "
+        words = [w.strip() for w in cleaned.split() if w.strip()]
+        if not words:
+            return ""
+        return " AND ".join(f'"{w}"' for w in words)
+
     def search_events(self, query: str, limit: int = 20) -> list[dict[str, Any]]:
         """Full-text search across events."""
+        fts_query = self._sanitize_fts_query(query)
+        if not fts_query:
+            return []
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT e.* FROM events e
@@ -453,7 +474,7 @@ class OmniBrainDB:
                    WHERE events_fts MATCH ?
                    ORDER BY rank
                    LIMIT ?""",
-                (query, limit),
+                (fts_query, limit),
             ).fetchall()
             return [dict(row) for row in rows]
 
@@ -733,6 +754,12 @@ class OmniBrainDB:
             rows = conn.execute("SELECT key, value FROM preferences").fetchall()
             return {row["key"]: json.loads(row["value"]) for row in rows}
 
+    def delete_preference(self, key: str) -> bool:
+        """Delete a preference by key. Returns True if a row was deleted."""
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM preferences WHERE key = ?", (key,))
+            return cursor.rowcount > 0
+
     # ── Briefings ──
 
     def insert_briefing(self, briefing: Briefing) -> int:
@@ -998,12 +1025,6 @@ class OmniBrainDB:
         if any(deleted.values()):
             logger.info(f"Pruned old data: {deleted}")
         return deleted
-
-    def vacuum(self) -> None:
-        """Compact the database file."""
-        conn = sqlite3.connect(str(self.db_path))
-        conn.execute("VACUUM")
-        conn.close()
 
     def export_all(self, output_dir: Path) -> None:
         """Export all data as JSON files (GDPR compliance)."""

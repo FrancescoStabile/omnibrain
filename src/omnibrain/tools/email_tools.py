@@ -164,7 +164,7 @@ def search_emails(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Tool: classify_email (stub — needs LLM, Phase 1 Day 7-8)
+# Tool: classify_email
 # ═══════════════════════════════════════════════════════════════════════════
 
 CLASSIFY_EMAIL_SCHEMA = {
@@ -190,10 +190,10 @@ def classify_email(
     sender: str = "",
     body_preview: str = "",
 ) -> dict[str, Any]:
-    """Classify email urgency. Returns structured classification.
+    """Classify email urgency via keyword heuristics.
 
-    NOTE: Full LLM-based classification is Phase 1 Day 7-8.
-    For now, returns heuristic classification based on keywords.
+    Returns structured classification with urgency, category, action, and
+    whether a draft reply is recommended.
     """
     urgency = "medium"
     category = "fyi"
@@ -233,7 +233,7 @@ def classify_email(
         "urgency": urgency,
         "category": category,
         "action": action,
-        "reasoning": f"Heuristic classification (LLM classification in Phase 1 Day 7-8)",
+        "reasoning": "Heuristic keyword-based classification",
         "draft_needed": draft_needed,
     }
 

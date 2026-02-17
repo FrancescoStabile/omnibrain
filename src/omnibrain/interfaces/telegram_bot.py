@@ -468,11 +468,7 @@ class OmniBrainTelegramBot:
     # ── Free Text Handler ──
 
     async def _handle_message(self, update: Any, context: Any) -> None:
-        """Handle free text messages from user.
-
-        In Phase 1 this does a memory search. In Phase 2 it'll route
-        to the full Omnigent agent.
-        """
+        """Handle free text messages — performs a memory search."""
         if not self._check_auth(update):
             return
 
@@ -480,7 +476,6 @@ class OmniBrainTelegramBot:
         if not text.strip():
             return
 
-        # Phase 1: treat free text as a memory search
         if self._memory:
             try:
                 results = self._memory.search(text, max_results=3)
@@ -497,8 +492,7 @@ class OmniBrainTelegramBot:
                 await update.message.reply_text("Hmm, something went wrong\\.", parse_mode="MarkdownV2")
         else:
             await update.message.reply_text(
-                "💬 Free\\-text processing coming soon\\. "
-                "Use /help to see available commands\\.",
+                "\ud83e\udd14 Memory not available\\. Use /help to see commands\\.",
                 parse_mode="MarkdownV2",
             )
 

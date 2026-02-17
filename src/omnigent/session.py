@@ -260,13 +260,6 @@ class SessionManager:
             self.current_session.status = "paused"
             self._save(self.current_session)
 
-    def delete_session(self, session_id: str):
-        """Delete a session (both encrypted and plaintext)."""
-        for ext in (".json", ".enc"):
-            session_file = self.sessions_dir / f"{session_id}{ext}"
-            if session_file.exists():
-                session_file.unlink()
-
     def _save(self, session: Session):
         """Save session to disk. Uses encryption if configured."""
         data = json.dumps(session.to_dict(), indent=2)
@@ -295,53 +288,6 @@ class SessionManager:
         else:
             session_file = self.sessions_dir / f"{session.id}.json"
             session_file.write_text(data)
-
-    def export_session(self, session_id: str, format: str = "md") -> str:
-        """Export session in various formats."""
-        session = self.resume_session(session_id)
-        if not session:
-            return ""
-
-        if format == "md":
-            return self._export_markdown(session)
-        elif format == "json":
-            return json.dumps(session.to_dict(), indent=2)
-        elif format == "html":
-            return self._export_html(session)
-        return ""
-
-    def _export_markdown(self, session: Session) -> str:
-        """Export as Markdown."""
-        md = "# Omnigent Session Report\n\n"
-        md += f"**Session ID**: {session.id}\n"
-        md += f"**Date**: {session.timestamp}\n"
-        md += f"**Subject**: {session.subject or 'N/A'}\n"
-        md += f"**Status**: {session.status}\n"
-        md += f"**Cost**: ${session.cost:.4f}\n"
-        md += f"**Tokens**: {session.tokens_in:,} in / {session.tokens_out:,} out\n\n"
-
-        md += f"## Findings ({len(session.findings)})\n\n"
-
-        for i, finding in enumerate(session.findings, 1):
-            md += f"### {i}. [{finding['severity'].upper()}] {finding['title']}\n\n"
-            md += f"**Description**: {finding['description']}\n\n"
-            if finding.get('evidence'):
-                md += f"**Evidence**:\n```\n{finding['evidence']}\n```\n\n"
-            md += "---\n\n"
-
-        return md
-
-    @staticmethod
-    def _escape(text: str) -> str:
-        """Escape HTML special characters."""
-        return (
-            str(text)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace('"', "&quot;")
-            .replace("'", "&#x27;")
-        )
 
     # ──────────────────────────────────────────────────────────
     # Checkpoint / Replay
@@ -481,66 +427,3 @@ class SessionManager:
             logger.error(f"Failed to restore checkpoint {checkpoint_id}: {e}")
             return False
 
-    def delete_checkpoints(self, session_id: str) -> int:
-        """Delete all checkpoints for a session. Returns count deleted."""
-        checkpoint_dir = self.sessions_dir / "checkpoints"
-        if not checkpoint_dir.exists():
-            return 0
-
-        count = 0
-        for f in checkpoint_dir.glob(f"{session_id}_cp*.json"):
-            f.unlink()
-            count += 1
-        return count
-
-    def _export_html(self, session: Session) -> str:
-        """Export as HTML."""
-        esc = self._escape
-        subject = esc(session.subject or 'N/A')
-        sid = esc(session.id)
-        ts = esc(str(session.timestamp))
-
-        html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Omnigent Report - {subject}</title>
-    <style>
-        body {{ font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; }}
-        .header {{ border-bottom: 2px solid #4cc9f0; padding-bottom: 10px; margin-bottom: 20px; }}
-        .finding {{ border: 1px solid #4cc9f0; padding: 15px; margin: 10px 0; border-radius: 4px; }}
-        .critical {{ border-color: #ff0051; }}
-        .high {{ border-color: #ff6b35; }}
-        .medium {{ border-color: #ffd700; }}
-        .severity {{ font-weight: bold; font-size: 1.2em; }}
-        pre {{ background: #111; padding: 10px; border-left: 3px solid #4cc9f0; }}
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>Omnigent Session Report</h1>
-        <p><strong>Session ID:</strong> {sid}</p>
-        <p><strong>Date:</strong> {ts}</p>
-        <p><strong>Subject:</strong> {subject}</p>
-        <p><strong>Cost:</strong> ${session.cost:.4f}</p>
-    </div>
-    <h2>Findings ({len(session.findings)})</h2>
-"""
-
-        for i, finding in enumerate(session.findings, 1):
-            severity_class = esc(finding['severity'].lower())
-            title = esc(finding['title'])
-            desc = esc(finding['description'])
-            sev_label = esc(finding['severity'].upper())
-            html += f"""
-    <div class="finding {severity_class}">
-        <div class="severity">[{sev_label}]</div>
-        <h3>{i}. {title}</h3>
-        <p><strong>Description:</strong> {desc}</p>
-"""
-            if finding.get('evidence'):
-                html += f"<p><strong>Evidence:</strong></p><pre>{esc(finding['evidence'])}</pre>"
-            html += "    </div>\n"
-
-        html += "\n</body>\n</html>"
-        return html

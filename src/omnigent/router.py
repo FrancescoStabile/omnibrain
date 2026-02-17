@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import random
+import re
 import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
@@ -73,10 +74,9 @@ class LLMProvider:
 
 def redact_api_keys(text: str) -> str:
     """Redact API keys from error messages for security."""
-    import re
     patterns = [
-        (r'sk-[a-zA-Z0-9]{20,}', 'sk-***REDACTED***'),
         (r'sk-ant-[a-zA-Z0-9-]{40,}', 'sk-ant-***REDACTED***'),
+        (r'sk-[a-zA-Z0-9]{20,}', 'sk-***REDACTED***'),
         (r'Bearer\s+[a-zA-Z0-9_-]+', 'Bearer ***REDACTED***'),
     ]
     for pattern, replacement in patterns:

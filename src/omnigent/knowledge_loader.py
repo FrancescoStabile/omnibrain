@@ -125,7 +125,7 @@ DEFAULT_BUDGET = 3000
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def load_knowledge(keys: list[str], max_total_tokens: int = 3000) -> str:
+def load_knowledge(keys: list[str], max_total_tokens: int = 3000, *, knowledge_map: dict[str, list] | None = None) -> str:
     """Load knowledge sections for a list of context keys within a token budget.
 
     Uses section-level granularity: broad files are filtered to include only
@@ -139,7 +139,7 @@ def load_knowledge(keys: list[str], max_total_tokens: int = 3000) -> str:
         if budget_used >= max_total_tokens:
             break
         normalized = key.lower().strip().replace(" ", "_").replace("-", "_")
-        entries = KNOWLEDGE_MAP.get(normalized, [])
+        entries = (knowledge_map or KNOWLEDGE_MAP).get(normalized, [])
 
         for entry in entries:
             if budget_used >= max_total_tokens:
@@ -184,7 +184,7 @@ def load_knowledge(keys: list[str], max_total_tokens: int = 3000) -> str:
     return "\n\n---\n\n".join(collected) if collected else ""
 
 
-def get_relevant_knowledge(profile: DomainProfile, current_phase: str = "") -> str:
+def get_relevant_knowledge(profile: DomainProfile, current_phase: str = "", *, knowledge_map: dict[str, list] | None = None) -> str:
     """Auto-select and load relevant knowledge based on the DomainProfile.
 
     Override this in domain implementations for domain-specific priority.
@@ -224,4 +224,4 @@ def get_relevant_knowledge(profile: DomainProfile, current_phase: str = "") -> s
     phase_key = current_phase.lower().strip().replace(" ", "_")
     budget = PHASE_BUDGETS.get(phase_key, DEFAULT_BUDGET)
 
-    return load_knowledge(unique, max_total_tokens=budget)
+    return load_knowledge(unique, max_total_tokens=budget, knowledge_map=knowledge_map)

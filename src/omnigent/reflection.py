@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from typing import Any
 
 from omnigent.domain_profile import DomainProfile
 
@@ -59,6 +60,8 @@ async def reflect_on_result_async(
     tool_args: dict,
     result: str,
     profile: DomainProfile,
+    *,
+    reflectors: dict[str, Any] | None = None,
 ) -> str:
     """Generate a reflection summary after a tool execution (async version).
 
@@ -66,39 +69,11 @@ async def reflect_on_result_async(
     """
     lines: list[str] = []
 
-    reflector = REFLECTORS.get(tool_name)
+    reflector = (reflectors or REFLECTORS).get(tool_name)
     if reflector:
         try:
             if inspect.iscoroutinefunction(reflector):
                 await reflector(result, tool_args, profile, lines)
-            else:
-                reflector(result, tool_args, profile, lines)
-        except Exception:
-            pass  # Reflectors must never crash the agent
-
-    _append_general_intelligence(profile, lines)
-
-    return "\n".join(lines) if lines else ""
-
-
-def reflect_on_result(
-    tool_name: str,
-    tool_args: dict,
-    result: str,
-    profile: DomainProfile,
-) -> str:
-    """Generate a reflection summary after a tool execution (sync version).
-
-    For backward compatibility. Wraps sync reflectors only.
-    Async reflectors are skipped — use reflect_on_result_async() instead.
-    """
-    lines: list[str] = []
-
-    reflector = REFLECTORS.get(tool_name)
-    if reflector:
-        try:
-            if inspect.iscoroutinefunction(reflector):
-                pass  # Skip async reflectors in sync context
             else:
                 reflector(result, tool_args, profile, lines)
         except Exception:

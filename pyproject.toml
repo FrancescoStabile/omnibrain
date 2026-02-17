@@ -8,7 +8,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "omnibrain"
-version = "0.1.0"
+version = "2.0.0"
 description = "Open-source AI platform that knows who you are, remembers everything, works 24/7, and grows through community-built Skills."
 readme = "README.md"
 license = { text = "MIT" }

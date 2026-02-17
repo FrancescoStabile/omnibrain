@@ -24,11 +24,14 @@ import { cn } from "@/lib/utils";
 // ═══════════════════════════════════════════════════════════════════════════
 
 function StepIndicator({ current }: { current: number }) {
+  const labels = ["Welcome", "Connect", "Analyze", "Reveal"];
   return (
-    <div className="flex gap-2 justify-center mb-8">
+    <nav aria-label={`Onboarding step ${current + 1} of 4: ${labels[current]}`} className="flex gap-2 justify-center mb-8">
       {[0, 1, 2, 3].map((i) => (
         <div
           key={i}
+          role="presentation"
+          aria-hidden="true"
           className={cn(
             "h-1.5 rounded-full transition-all duration-500",
             i === current
@@ -39,7 +42,7 @@ function StepIndicator({ current }: { current: number }) {
           )}
         />
       ))}
-    </div>
+    </nav>
   );
 }
 

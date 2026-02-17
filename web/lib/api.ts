@@ -192,10 +192,10 @@ export interface OnboardingResult {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Fetch wrapper
+// Fetch wrapper with retry + timeout
 // ═══════════════════════════════════════════════════════════════════════════
 
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(
     public status: number,
     public code: string,
@@ -206,9 +206,20 @@ class ApiError extends Error {
   }
 }
 
+/** Global error listener — set by UI layer for toast notifications */
+let _onApiError: ((error: ApiError) => void) | null = null;
+export function setApiErrorHandler(fn: ((error: ApiError) => void) | null) {
+  _onApiError = fn;
+}
+
+const MAX_RETRIES = 2;
+const RETRY_DELAY = 800; // ms
+const REQUEST_TIMEOUT = 15_000; // 15s
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
+  { retries = MAX_RETRIES, silent = false }: { retries?: number; silent?: boolean } = {},
 ): Promise<T> {
   const url = `${BASE}${path}`;
   const headers: Record<string, string> = {
@@ -216,22 +227,62 @@ async function request<T>(
     ...(options.headers as Record<string, string>),
   };
 
-  const res = await fetch(url, { ...options, headers });
+  let lastError: ApiError | null = null;
 
-  if (!res.ok) {
-    let code = "UNKNOWN";
-    let message = res.statusText;
+  for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      const body = await res.json();
-      code = body.error?.code || body.detail || code;
-      message = body.error?.message || body.detail || message;
-    } catch {
-      // response wasn't JSON
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+
+      const res = await fetch(url, {
+        ...options,
+        headers,
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        let code = "UNKNOWN";
+        let message = res.statusText;
+        try {
+          const body = await res.json();
+          code = body.error?.code || body.detail || code;
+          message = body.error?.message || body.detail || message;
+        } catch {
+          // response wasn't JSON
+        }
+        throw new ApiError(res.status, code, message);
+      }
+
+      return res.json() as Promise<T>;
+    } catch (err) {
+      if (err instanceof ApiError) {
+        // Don't retry 4xx (client errors) except 429 (rate limit)
+        if (err.status >= 400 && err.status < 500 && err.status !== 429) {
+          lastError = err;
+          break;
+        }
+        lastError = err;
+      } else if (err instanceof DOMException && err.name === "AbortError") {
+        lastError = new ApiError(0, "TIMEOUT", "Request timed out");
+      } else {
+        lastError = new ApiError(0, "NETWORK", "Network error — is the backend running?");
+      }
+
+      // Wait before retry (skip wait on last attempt)
+      if (attempt < retries) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAY * (attempt + 1)));
+      }
     }
-    throw new ApiError(res.status, code, message);
   }
 
-  return res.json() as Promise<T>;
+  // Notify global error handler
+  if (lastError && !silent && _onApiError) {
+    _onApiError(lastError);
+  }
+
+  throw lastError!;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

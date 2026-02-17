@@ -98,6 +98,10 @@ function getInitialTheme(): Theme {
   } catch {
     // SSR or blocked storage
   }
+  // Respect system preference
+  if (typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: light)").matches) {
+    return "light";
+  }
   return "dark";
 }
 

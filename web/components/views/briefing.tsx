@@ -191,9 +191,9 @@ function ProposalsSection({
   };
 
   return (
-    <section className="space-y-3">
+    <section className="space-y-3" aria-label="Pending proposals">
       <div className="flex items-center gap-2">
-        <Zap className="h-5 w-5 text-[var(--accent-orange)]" />
+        <Zap className="h-5 w-5 text-[var(--accent-orange)]" aria-hidden="true" />
         <h2 className="text-lg font-semibold text-[var(--text-primary)]">
           Needs Your Attention
         </h2>
@@ -440,7 +440,7 @@ export function BriefingPage() {
   const d = briefingData;
 
   return (
-    <div className="max-w-3xl mx-auto p-6 space-y-6">
+    <div className="max-w-3xl mx-auto p-6 space-y-6" role="region" aria-label="Daily briefing">
       {/* ── Greeting ── */}
       <header className="flex items-end justify-between">
         <div className="space-y-1">
@@ -461,6 +461,7 @@ export function BriefingPage() {
           onClick={loadBriefing}
           disabled={briefingLoading}
           className={briefingLoading ? "animate-spin" : ""}
+          aria-label="Refresh briefing"
         >
           <RefreshCw className="h-4 w-4" />
         </Button>
@@ -468,7 +469,7 @@ export function BriefingPage() {
 
       {/* ── Loading ── */}
       {briefingLoading && !d && (
-        <div className="space-y-3">
+        <div className="space-y-3" role="status" aria-label="Loading briefing">
           <SkeletonCard />
           <SkeletonCard />
           <SkeletonCard />

@@ -226,17 +226,26 @@
 
   --text-primary: #171717;
   --text-secondary: #525260;
-  --text-tertiary: #8b8b96;
+  --text-tertiary: #6b6b73;
+
+  --brand-glow: rgba(124, 58, 237, 0.08);
 
   --border-subtle: #e5e5ea;
   --border-default: #d4d4d8;
   --border-strong: #a1a1ab;
 
+  --success: #16a34a;
+  --warning: #d97706;
+  --error: #dc2626;
+  --info: #2563eb;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
   --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.06);
   --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.06);
   --shadow-xl: 0 20px 25px rgba(0, 0, 0, 0.08), 0 8px 10px rgba(0, 0, 0, 0.04);
   --shadow-inset: inset 0 2px 4px rgba(0, 0, 0, 0.03);
+  --shadow-glow: 0 0 20px rgba(124, 58, 237, 0.15);
   --gradient-card: linear-gradient(180deg, var(--bg-secondary), var(--bg-tertiary));
 }
 

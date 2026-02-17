@@ -1,14 +1,60 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://omnibrain.dev";
+
 export const metadata: Metadata = {
-  title: "OmniBrain",
-  description: "Your AI-powered personal assistant",
-  icons: { icon: "/favicon.ico" },
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: "OmniBrain — Your AI That Remembers Everything",
+    template: "%s | OmniBrain",
+  },
+  description:
+    "Open-source AI platform that knows you, remembers everything, works 24/7, and grows smarter through community-built Skills. Local-first. MIT license.",
+  keywords: [
+    "AI assistant",
+    "personal AI",
+    "open source",
+    "second brain",
+    "proactive AI",
+    "skill protocol",
+    "local-first",
+    "privacy",
+  ],
+  authors: [{ name: "Francesco Stabile" }],
+  creator: "Francesco Stabile",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "32x32" },
+      { url: "/favicon.svg", type: "image/svg+xml" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
+  manifest: "/site.webmanifest",
+  openGraph: {
+    type: "website",
+    siteName: "OmniBrain",
+    title: "OmniBrain — Your AI That Remembers Everything",
+    description:
+      "Open-source AI platform that knows you, remembers everything, and works while you sleep. Connect Google, get insights in 30 seconds.",
+    url: SITE_URL,
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "OmniBrain — Your AI That Remembers Everything",
+    description:
+      "Open-source personal AI. Connects your email & calendar, builds a knowledge graph, works proactively. Free forever.",
+    creator: "@Francesco_Sta",
+  },
+  robots: { index: true, follow: true },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#7C3AED",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#0a0a0b" },
+    { media: "(prefers-color-scheme: light)", color: "#7C3AED" },
+  ],
   width: "device-width",
   initialScale: 1,
 };

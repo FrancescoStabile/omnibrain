@@ -17,11 +17,12 @@ import { ChatPage } from "@/components/views/chat";
 import { SkillsPage } from "@/components/views/skills";
 import { SettingsPage } from "@/components/views/settings";
 import { OnboardingPage } from "@/components/views/onboarding";
-import { api } from "@/lib/api";
+import { api, ApiError, setApiErrorHandler } from "@/lib/api";
 import { useStore, type View } from "@/lib/store";
 import { ToastProvider, useToast } from "@/components/ui/toast";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useWebSocket, setWebSocketToastFn } from "@/hooks/useWebSocket";
+import { useHotkeys, ShortcutsHelp } from "@/hooks/useHotkeys";
 
 const views: Record<string, React.FC> = {
   home: HomePage,
@@ -62,6 +63,7 @@ interface AppShellProps {
 function ToastBridge() {
   const toast = useToast();
 
+  // Wire WebSocket notifications to toast
   useEffect(() => {
     setWebSocketToastFn((level: string, message: string) => {
       if (level === "critical") {
@@ -73,6 +75,21 @@ function ToastBridge() {
       }
     });
     return () => setWebSocketToastFn(null);
+  }, [toast]);
+
+  // Wire global API errors to toast
+  useEffect(() => {
+    setApiErrorHandler((err: ApiError) => {
+      if (err.status === 0) {
+        toast.error(err.message || "Network error — is the backend running?", 6000);
+      } else if (err.status >= 500) {
+        toast.error(`Server error: ${err.message}`, 5000);
+      } else if (err.status === 429) {
+        toast.warning("Too many requests — slow down a bit.", 4000);
+      }
+      // 4xx are typically handled by the calling component
+    });
+    return () => setApiErrorHandler(null);
   }, [toast]);
 
   // Request browser notification permission (once)
@@ -98,6 +115,9 @@ export function AppShell({ initialView }: AppShellProps) {
 
   // ── WebSocket for real-time proactive notifications ──
   useWebSocket();
+
+  // ── Global keyboard shortcuts ──
+  useHotkeys();
 
   // Sync initial view from route on mount
   useEffect(() => {
@@ -186,6 +206,7 @@ export function AppShell({ initialView }: AppShellProps) {
   return (
     <ToastProvider>
       <ToastBridge />
+      <ShortcutsHelp />
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:px-4 focus:py-2 focus:rounded-[var(--radius-sm)] focus:bg-[var(--brand-primary)] focus:text-white focus:text-sm focus:font-medium"

@@ -139,7 +139,7 @@ function SkillCard({ skill }: { skill: SkillInfo }) {
               variant="ghost"
               size="sm"
               onClick={handleToggle}
-              title={enabled ? "Disable" : "Enable"}
+              aria-label={enabled ? `Disable ${skill.name}` : `Enable ${skill.name}`}
             >
               {enabled ? (
                 <ToggleRight className="h-4 w-4 text-[var(--success)]" />
@@ -153,7 +153,7 @@ function SkillCard({ skill }: { skill: SkillInfo }) {
               size="sm"
               onClick={handleRemove}
               className="text-[var(--error)]"
-              title="Remove"
+              aria-label={`Remove ${skill.name}`}
             >
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
@@ -164,6 +164,7 @@ function SkillCard({ skill }: { skill: SkillInfo }) {
             size="sm"
             onClick={handleInstall}
             disabled={installing}
+            aria-label={`Install ${skill.name}`}
           >
             <Download className="h-3.5 w-3.5" />
             {installing ? "Installing..." : "Install"}
@@ -210,7 +211,7 @@ export function SkillsPage() {
   });
 
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-6">
+    <div className="max-w-5xl mx-auto p-6 space-y-6" role="region" aria-label="Skill store">
       <header>
         <h1 className="text-2xl font-bold text-[var(--text-primary)]">Skill Store</h1>
         <p className="text-sm text-[var(--text-tertiary)] mt-1">
@@ -227,12 +228,15 @@ export function SkillsPage() {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search skills..."
             className="pl-9"
+            aria-label="Search skills"
           />
         </div>
-        <div className="flex gap-1.5 flex-wrap">
+        <div className="flex gap-1.5 flex-wrap" role="tablist" aria-label="Skill categories">
           {categories.map((cat) => (
             <button
               key={cat}
+              role="tab"
+              aria-selected={category === cat}
               onClick={() => setCategory(cat)}
               className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
                 category === cat

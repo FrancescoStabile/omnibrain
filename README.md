@@ -138,7 +138,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Verify (983 tests should pass)
+# Verify (1474 tests should pass)
 pytest -x -q
 
 # Configure
@@ -201,7 +201,7 @@ omnibrain/
 
 ## Status
 
-**983 tests passing.** Core engine, memory, knowledge graph, proactive engine, briefings, approval, Gmail, Calendar — all built and tested.
+**1474 tests passing.** Core engine, memory, knowledge graph, proactive engine, briefings, approval, Gmail, Calendar, Web UI, Skill Runtime — all built and tested.
 
 Building: Skill Protocol runtime, Web UI, marketplace, and the 30-second onboarding experience.
 

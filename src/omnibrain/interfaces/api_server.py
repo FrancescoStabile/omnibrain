@@ -53,7 +53,7 @@ import asyncio
 import json
 import logging
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -151,6 +151,9 @@ if _fastapi_available:
 
     class RejectRequest(BaseModel):
         reason: str = ""
+
+    class SnoozeRequest(BaseModel):
+        hours: int = 4
 
     class SkillResponse(BaseModel):
         name: str
@@ -327,6 +330,22 @@ class OmniBrainAPIServer:
             version=version,
             description="OmniBrain REST API — your AI chief of staff",
         )
+
+        # CORS — allow frontend at :3000 to reach API at :7432
+        try:
+            from fastapi.middleware.cors import CORSMiddleware
+            self.app.add_middleware(
+                CORSMiddleware,
+                allow_origins=[
+                    "http://localhost:3000",
+                    "http://127.0.0.1:3000",
+                ],
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
+        except ImportError:
+            logger.warning("CORSMiddleware not available")
 
         self._register_routes()
 
@@ -525,6 +544,14 @@ class OmniBrainAPIServer:
 
         @app.post("/api/v1/proposals/{proposal_id}/approve", response_model=ProposalActionResponse)
         async def approve_proposal(proposal_id: int, token: str = Depends(verify_api_key)) -> ProposalActionResponse:
+            gate = getattr(self, "_approval_gate", None)
+            if gate:
+                result = gate.execute_approved(proposal_id)
+                if not result["ok"] and "not found" in result.get("result", "").lower():
+                    raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found")
+                new_status = "executed" if result["ok"] else "approved"
+                return ProposalActionResponse(ok=True, proposal_id=proposal_id, new_status=new_status)
+            # Fallback: just mark as approved
             ok = self._db.update_proposal_status(proposal_id, "approved")
             if not ok:
                 raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found")
@@ -543,6 +570,25 @@ class OmniBrainAPIServer:
             if not ok:
                 raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found")
             return ProposalActionResponse(ok=True, proposal_id=proposal_id, new_status="rejected")
+
+        # ── POST /api/v1/proposals/{id}/snooze ──
+
+        @app.post("/api/v1/proposals/{proposal_id}/snooze", response_model=ProposalActionResponse)
+        async def snooze_proposal(
+            proposal_id: int,
+            body: SnoozeRequest | None = None,
+            token: str = Depends(verify_api_key),
+        ) -> ProposalActionResponse:
+            hours = body.hours if body else 4
+            snooze_until = (datetime.now() + timedelta(hours=hours)).isoformat()
+            with self._db._connect() as conn:
+                cursor = conn.execute(
+                    "UPDATE proposals SET status = 'snoozed', snoozed_until = ? WHERE id = ? AND status = 'pending'",
+                    (snooze_until, proposal_id),
+                )
+                if cursor.rowcount == 0:
+                    raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found or not pending")
+            return ProposalActionResponse(ok=True, proposal_id=proposal_id, new_status="snoozed")
 
         # ── GET /api/v1/search ──
 
@@ -620,6 +666,78 @@ class OmniBrainAPIServer:
         @app.get("/api/v1/stats")
         async def get_stats(token: str = Depends(verify_api_key)) -> dict[str, int]:
             return self._db.get_stats()
+
+        # ── GET /api/v1/timeline ──
+
+        @app.get("/api/v1/timeline")
+        async def get_timeline(
+            source: str = Query("", description="Filter by source"),
+            since: str = Query("", description="Start date (ISO format)"),
+            until: str = Query("", description="End date (ISO format)"),
+            limit: int = Query(50, ge=1, le=200),
+            offset: int = Query(0, ge=0),
+            token: str = Depends(verify_api_key),
+        ) -> dict[str, Any]:
+            """Unified timeline across events, proposals, and observations."""
+            items: list[dict[str, Any]] = []
+
+            # Events
+            ev_kwargs: dict[str, Any] = {"limit": limit}
+            if source:
+                ev_kwargs["source"] = source
+            if since:
+                try:
+                    ev_kwargs["since"] = datetime.fromisoformat(since)
+                except ValueError:
+                    pass
+            if until:
+                try:
+                    ev_kwargs["until"] = datetime.fromisoformat(until)
+                except ValueError:
+                    pass
+            events = self._db.get_events(**ev_kwargs)
+            for e in events:
+                items.append({
+                    "id": f"event-{e['id']}",
+                    "type": "event",
+                    "source": e.get("source", ""),
+                    "title": e.get("title", ""),
+                    "timestamp": e.get("timestamp", ""),
+                    "metadata": e.get("metadata", "{}"),
+                })
+
+            # Proposals
+            if not source or source == "proposal":
+                proposals = self._db.get_pending_proposals()
+                for p in proposals:
+                    items.append({
+                        "id": f"proposal-{p['id']}",
+                        "type": "proposal",
+                        "source": "proposal",
+                        "title": p.get("title", ""),
+                        "timestamp": p.get("created_at", ""),
+                        "metadata": json.dumps({"status": p.get("status", ""), "priority": p.get("priority", 2)}),
+                    })
+
+            # Observations
+            if not source or source == "observation":
+                observations = self._db.get_observations(days=30)
+                for o in observations:
+                    items.append({
+                        "id": f"obs-{o['id']}",
+                        "type": "observation",
+                        "source": "observation",
+                        "title": o.get("description", ""),
+                        "timestamp": o.get("timestamp", ""),
+                        "metadata": json.dumps({"pattern_type": o.get("pattern_type", "")}),
+                    })
+
+            # Sort by timestamp descending and paginate
+            items.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+            total = len(items)
+            items = items[offset:offset + limit]
+
+            return {"items": items, "total": total, "offset": offset, "limit": limit}
 
         # ── POST /api/v1/message ──
 
@@ -1501,6 +1619,13 @@ class OmniBrainAPIServer:
             Pushes new proposals, skill events, and status updates to
             connected Web UI clients.
             """
+            # Authenticate via query param: ws://host/api/v1/feed?token=...
+            if self._auth_token:
+                token = ws.query_params.get("token", "")
+                if not self._verify_token(token):
+                    await ws.close(code=4001, reason="Unauthorized")
+                    return
+
             await ws.accept()
             self._ws_clients.add(ws)
             try:
@@ -1531,6 +1656,20 @@ def create_api_server(
     config = OmniBrainConfig()
     actual_dir = data_dir or config.data_dir
     db = OmniBrainDB(actual_dir)
+
+    # ── Auth token — generate if none provided ──
+    if not auth_token:
+        token_file = actual_dir / "auth_token"
+        if token_file.exists():
+            auth_token = token_file.read_text().strip()
+        else:
+            auth_token = secrets.token_urlsafe(32)
+            actual_dir.mkdir(parents=True, exist_ok=True)
+            token_file.write_text(auth_token)
+            token_file.chmod(0o600)
+            logger.info("Generated new API auth token → %s", token_file)
+        if auth_token:
+            logger.info("API auth token: %s", auth_token[:8] + "...")
 
     memory = None
     try:
@@ -1604,12 +1743,31 @@ def create_api_server(
     # ── Wire SkillRuntime + EventBus ──
     event_bus = EventBus()
     skill_runtime: SkillRuntime | None = None
+
+    # ── Wire PromptInjectionDefense ──
+    sanitizer = None
+    try:
+        from omnibrain.prompt_injection import PromptSanitizer
+        sanitizer = PromptSanitizer()
+        logger.info("PromptInjectionDefense wired")
+    except Exception as e:
+        logger.warning("Failed to create PromptSanitizer: %s", e)
+
+    # ── Wire ApprovalGate ──
+    approval_gate = None
+    try:
+        from omnibrain.approval import ApprovalGate
+        approval_gate = ApprovalGate(db)
+        logger.info("ApprovalGate wired")
+    except Exception as e:
+        logger.warning("Failed to create ApprovalGate: %s", e)
+
     try:
         skill_runtime = SkillRuntime(
             db=db,
             memory=memory,
             knowledge_graph=knowledge_graph,
-            approval_gate=None,
+            approval_gate=approval_gate,
             config=config,
             event_bus=event_bus,
             llm_router=router,
@@ -1653,6 +1811,8 @@ def create_api_server(
     server._skill_runtime = skill_runtime  # type: ignore[attr-defined]
     server._event_bus = event_bus  # type: ignore[attr-defined]
     server._knowledge_graph = knowledge_graph  # type: ignore[attr-defined]
+    server._sanitizer = sanitizer  # type: ignore[attr-defined]
+    server._approval_gate = approval_gate  # type: ignore[attr-defined]
 
     # ── Wire EventBus "notification" → WebSocket broadcast ──
     async def _event_bus_to_ws(event_type: str, data: dict[str, Any]) -> None:

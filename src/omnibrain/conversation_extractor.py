@@ -90,6 +90,7 @@ async def extract_and_persist(
     db: Any,  # OmniBrainDB
     memory: Any | None = None,  # MemoryManager
     session_id: str = "default",
+    sanitizer: Any | None = None,  # PromptSanitizer
 ) -> dict[str, int]:
     """Extract structured data from a conversation and persist it.
 
@@ -114,6 +115,17 @@ async def extract_and_persist(
         f"User: {user_message}\n\n"
         f"Assistant: {assistant_response[:1000]}"
     )
+
+    # Sanitize external content if sanitizer is available
+    if sanitizer:
+        try:
+            result = sanitizer.sanitize(prompt, source="chat_extraction")
+            if result.is_blocked:
+                logger.warning("Extraction blocked by prompt injection defense: %s", result.reason)
+                return {}
+            prompt = result.safe_text
+        except Exception as e:
+            logger.debug("Sanitizer error: %s", e)
 
     try:
         # Call LLM for extraction

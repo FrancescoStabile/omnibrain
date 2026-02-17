@@ -161,6 +161,8 @@ class ProactiveEngine:
         self._tick_interval = 30  # Check every 30 seconds
         self._notify_callback: Callable[[str, str, str], None] | None = None
         self._briefing_gen: BriefingGenerator | None = None
+        self._review_engine: Any = None
+        self._pattern_detector: Any = None
         self._memory: Any = None
 
     @property
@@ -184,6 +186,8 @@ class ProactiveEngine:
         self,
         briefing_generator: BriefingGenerator | None = None,
         memory_manager: Any = None,
+        review_engine: Any = None,
+        pattern_detector: Any = None,
         check_interval_minutes: int = 5,
         briefing_time: str = "07:00",
         evening_time: str = "22:00",
@@ -195,6 +199,8 @@ class ProactiveEngine:
         Args:
             briefing_generator: BriefingGenerator instance.
             memory_manager: MemoryManager instance.
+            review_engine: ReviewEngine for evening/weekly summaries.
+            pattern_detector: PatternDetector for pattern detection.
             check_interval_minutes: How often to check emails/calendar.
             briefing_time: Morning briefing time (HH:MM).
             evening_time: Evening summary time (HH:MM).
@@ -203,6 +209,8 @@ class ProactiveEngine:
         """
         self._briefing_gen = briefing_generator
         self._memory = memory_manager
+        self._review_engine = review_engine
+        self._pattern_detector = pattern_detector
 
         # Interval tasks
         self.register_task(ScheduledTask(
@@ -369,6 +377,23 @@ class ProactiveEngine:
             return
 
         try:
+            # Prefer LLM narrative when router is available
+            if hasattr(self._briefing_gen, 'generate_and_store_narrative'):
+                try:
+                    data, text, briefing_id = await self._briefing_gen.generate_and_store_narrative("morning")
+                    logger.info(
+                        f"Morning briefing (narrative) generated: id={briefing_id}, "
+                        f"{data.events_processed} events, {data.actions_proposed} actions"
+                    )
+                    self._notify(
+                        NotificationLevel.IMPORTANT,
+                        "Morning Briefing",
+                        text[:500],
+                    )
+                    return
+                except Exception as e:
+                    logger.warning(f"Narrative briefing failed, falling back: {e}")
+
             data, text, briefing_id = self._briefing_gen.generate_and_store("morning")
             logger.info(
                 f"Morning briefing generated: id={briefing_id}, "
@@ -388,6 +413,27 @@ class ProactiveEngine:
             return
 
         try:
+            # Use ReviewEngine for rich evening summaries when available
+            if self._review_engine:
+                try:
+                    summary = self._review_engine.generate_evening()
+                    text = summary.format_text()
+                    # Store via briefing generator's DB
+                    from omnibrain.models import Briefing
+                    briefing = Briefing(
+                        briefing_type="evening",
+                        date=summary.date,
+                        content=text,
+                        events_processed=summary.stats.total_events if summary.stats else 0,
+                        actions_proposed=summary.stats.proposals_actioned if summary.stats else 0,
+                    )
+                    self._briefing_gen._db.insert_briefing(briefing)
+                    logger.info("Evening summary generated via ReviewEngine")
+                    self._notify(NotificationLevel.FYI, "Evening Summary", text[:500])
+                    return
+                except Exception as e:
+                    logger.warning("ReviewEngine evening failed, falling back: %s", e)
+
             data, text, briefing_id = self._briefing_gen.generate_and_store("evening")
             logger.info(f"Evening summary generated: id={briefing_id}")
             self._notify(NotificationLevel.FYI, "Evening Summary", text[:500])
@@ -397,6 +443,28 @@ class ProactiveEngine:
     async def _detect_patterns(self) -> None:
         """Analyze observations for recurring patterns."""
         try:
+            # Use PatternDetector when available for proper clustering
+            if self._pattern_detector:
+                try:
+                    patterns = self._pattern_detector.detect()
+                    strong = self._pattern_detector.get_strong_patterns()
+                    if strong:
+                        for p in strong[:3]:
+                            self._notify(
+                                NotificationLevel.FYI,
+                                "Pattern Detected",
+                                f"'{p.pattern_type}': {p.description} "
+                                f"(seen {p.occurrence_count}x, strength: {p.strength})",
+                            )
+                    if patterns:
+                        logger.info(
+                            f"PatternDetector: {len(patterns)} patterns, {len(strong)} strong"
+                        )
+                    return
+                except Exception as e:
+                    logger.warning("PatternDetector failed, falling back: %s", e)
+
+            # Fallback: simple observation grouping
             observations = self._db.get_observations(days=30)
 
             by_type: dict[str, list[dict[str, Any]]] = {}
@@ -436,6 +504,25 @@ class ProactiveEngine:
             return
 
         try:
+            # Use ReviewEngine for rich weekly reviews when available
+            if self._review_engine:
+                try:
+                    review = self._review_engine.generate_weekly()
+                    text = review.format_text()
+                    from omnibrain.models import Briefing
+                    briefing = Briefing(
+                        briefing_type="weekly",
+                        date=review.end_date,
+                        content=text,
+                        events_processed=review.stats.total_events if review.stats else 0,
+                    )
+                    self._briefing_gen._db.insert_briefing(briefing)
+                    logger.info("Weekly review generated via ReviewEngine")
+                    self._notify(NotificationLevel.IMPORTANT, "Weekly Review", text[:500])
+                    return
+                except Exception as e:
+                    logger.warning("ReviewEngine weekly failed, falling back: %s", e)
+
             data, text, briefing_id = self._briefing_gen.generate_and_store("weekly")
             logger.info(f"Weekly review generated: id={briefing_id}")
             self._notify(NotificationLevel.IMPORTANT, "Weekly Review", text[:500])

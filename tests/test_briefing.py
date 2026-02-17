@@ -524,6 +524,7 @@ class TestMemoryIntegration:
 
         gen = BriefingGenerator(db, mm)
         data = gen.collect_data()
+        # Memory highlights deduplicates identical entries across sources
         assert len(data.memory_highlights) == 1
         assert "morning" in data.memory_highlights[0]
 

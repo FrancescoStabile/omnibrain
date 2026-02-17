@@ -463,6 +463,16 @@ class OmniBrainAPIServer:
                 data = self._briefing_gen.collect_data(type)
                 text = self._briefing_gen.format_text(data)
 
+                # Auto-store if no briefing for today yet
+                today = datetime.now().strftime("%Y-%m-%d")
+                try:
+                    latest = self._db.get_latest_briefing(type)
+                    if not latest or latest.get("date") != today:
+                        self._briefing_gen.store(data, text)
+                        logger.info("Auto-stored %s briefing for %s", type, today)
+                except Exception:
+                    pass
+
                 user_name = self._db.get_preference("user_name", "")
                 h = datetime.now().hour
                 period = "morning" if h < 12 else "afternoon" if h < 18 else "evening"
@@ -927,6 +937,8 @@ class OmniBrainAPIServer:
 
                 # ── 5. Stream from LLM or fallback ──
                 full_response = ""
+                total_input_tokens = 0
+                total_output_tokens = 0
 
                 if self._router:
                     try:
@@ -938,6 +950,10 @@ class OmniBrainAPIServer:
                                 full_response += chunk.content
                                 data = json.dumps({"type": "token", "content": chunk.content})
                                 yield f"data: {data}\n\n"
+                            if chunk.input_tokens:
+                                total_input_tokens += chunk.input_tokens
+                            if chunk.output_tokens:
+                                total_output_tokens += chunk.output_tokens
                             if chunk.done:
                                 break
                     except Exception as e:
@@ -993,7 +1009,47 @@ class OmniBrainAPIServer:
                     except Exception:
                         pass
 
-                # ── 9. Done signal ──
+                # ── 8b. Extract structured data from conversation ──
+                if self._router and body.message.strip() and full_response.strip():
+                    try:
+                        from omnibrain.conversation_extractor import extract_and_persist
+
+                        asyncio.get_event_loop().create_task(
+                            extract_and_persist(
+                                user_message=body.message,
+                                assistant_response=full_response,
+                                router=self._router,
+                                db=self._db,
+                                memory=self._memory,
+                                session_id=session_id,
+                            )
+                        )
+                    except Exception as e:
+                        logger.debug("Extraction task launch failed: %s", e)
+
+                # ── 9. Track LLM cost ──
+                if total_input_tokens or total_output_tokens:
+                    try:
+                        # Estimate cost using DeepSeek pricing as default
+                        cost_in = total_input_tokens * 0.00014 / 1000
+                        cost_out = total_output_tokens * 0.00028 / 1000
+                        call_cost = cost_in + cost_out
+                        month_cost = float(self._db.get_preference("llm_month_cost", "0") or "0")
+                        month_calls = int(self._db.get_preference("llm_month_calls", "0") or "0")
+                        self._db.set_preference(
+                            "llm_month_cost",
+                            str(round(month_cost + call_cost, 6)),
+                            learned_from="cost_tracker",
+                        )
+                        self._db.set_preference(
+                            "llm_month_calls",
+                            str(month_calls + 1),
+                            learned_from="cost_tracker",
+                        )
+                    except Exception:
+                        pass
+
+                # ── 10. Done signal ──
                 yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
 
             return StreamingResponse(
@@ -1180,6 +1236,60 @@ class OmniBrainAPIServer:
             except Exception as e:
                 logger.warning("Failed to store onboarding prefs: %s", e)
 
+            # ── Persist raw Google data that was previously discarded ──
+            try:
+                import json as _json
+                # Persist emails as events
+                for em in result.raw_emails:
+                    subject = getattr(em, "subject", "") or ""
+                    snippet = getattr(em, "snippet", "") or getattr(em, "body", "")[:500] if hasattr(em, "body") else ""
+                    sender = getattr(em, "sender", "")
+                    ts = getattr(em, "date", None) or getattr(em, "timestamp", None)
+                    ts_str = ts.isoformat() if hasattr(ts, "isoformat") else str(ts) if ts else None
+                    self._db.insert_event(
+                        source="gmail",
+                        event_type="email",
+                        title=subject or "(no subject)",
+                        content=snippet,
+                        metadata=_json.dumps({"sender": sender, "from_onboarding": True}),
+                        timestamp=ts_str,
+                    )
+                # Persist calendar events
+                for ev in result.raw_events:
+                    title = getattr(ev, "title", "") or getattr(ev, "summary", "") or ""
+                    start = getattr(ev, "start_time", None) or getattr(ev, "start", None)
+                    end = getattr(ev, "end_time", None) or getattr(ev, "end", None)
+                    attendees = getattr(ev, "attendees", [])
+                    ts_str = start.isoformat() if hasattr(start, "isoformat") else str(start) if start else None
+                    self._db.insert_event(
+                        source="calendar",
+                        event_type="meeting",
+                        title=title or "(untitled event)",
+                        metadata=_json.dumps({
+                            "start_time": start.isoformat() if hasattr(start, "isoformat") else str(start or ""),
+                            "end_time": end.isoformat() if hasattr(end, "isoformat") else str(end or ""),
+                            "attendees": _json.dumps(list(attendees) if attendees else []),
+                            "from_onboarding": True,
+                        }),
+                        timestamp=ts_str,
+                    )
+                # Persist contacts
+                for contact_email in result.raw_contacts:
+                    if contact_email and "@" in contact_email:
+                        from omnibrain.models import ContactInfo
+                        self._db.upsert_contact(ContactInfo(
+                            email=contact_email,
+                            name=contact_email.split("@")[0].replace(".", " ").title(),
+                            source="gmail",
+                        ))
+                if result.raw_emails or result.raw_events:
+                    logger.info(
+                        "Onboarding: persisted %d emails, %d events, %d contacts",
+                        len(result.raw_emails), len(result.raw_events), len(result.raw_contacts),
+                    )
+            except Exception as e:
+                logger.warning("Failed to persist onboarding raw data: %s", e)
+
             return OnboardingResultResponse(
                 greeting=result.greeting,
                 stats=result.stats,
@@ -1243,7 +1353,142 @@ class OmniBrainAPIServer:
 
             self._db.set_preference("onboarding_complete", True, learned_from="onboarding_chat")
 
+            # ── Extract structured data from interview answers ──
+            # Run LLM extraction on the profile to populate events table
+            # so the briefing has data from day zero.
+            if self._router and (body.work or body.goals):
+                try:
+                    from omnibrain.conversation_extractor import extract_and_persist
+
+                    profile_text = []
+                    if body.name:
+                        profile_text.append(f"My name is {body.name}.")
+                    if body.work:
+                        profile_text.append(f"I work on: {body.work}.")
+                    if body.goals:
+                        profile_text.append(f"What I wish I had more time for: {body.goals}.")
+
+                    user_msg = " ".join(profile_text)
+                    assistant_msg = f"Welcome {body.name or 'there'}! I've saved your profile."
+
+                    asyncio.get_event_loop().create_task(
+                        extract_and_persist(
+                            user_message=user_msg,
+                            assistant_response=assistant_msg,
+                            router=self._router,
+                            db=self._db,
+                            memory=self._memory,
+                            session_id="onboarding",
+                        )
+                    )
+                except Exception as e:
+                    logger.debug("Onboarding extraction failed: %s", e)
+
             return {"ok": True, "saved": saved}
+
+        # ══════════════════════════════════════════════════════════════════
+        # Knowledge Graph — cross-source queries
+        # ══════════════════════════════════════════════════════════════════
+
+        @app.get("/api/v1/knowledge/query")
+        async def knowledge_query(
+            q: str = "",
+            token: str = Depends(verify_api_key),
+        ) -> dict[str, Any]:
+            """Query the knowledge graph with natural language."""
+            kg = getattr(self, "_knowledge_graph", None)
+            if not kg:
+                return {"answer": "", "sources": [], "error": "Knowledge graph not available"}
+            if not q.strip():
+                return {"answer": "", "sources": [], "error": "Empty query"}
+            try:
+                result = kg.query(q.strip())
+                return {
+                    "answer": result.answer,
+                    "confidence": result.confidence,
+                    "sources": [s.to_dict() for s in result.sources[:10]],
+                }
+            except Exception as e:
+                logger.warning("Knowledge query failed: %s", e)
+                return {"answer": "", "sources": [], "error": str(e)}
+
+        @app.get("/api/v1/knowledge/contact/{identifier}")
+        async def knowledge_contact(
+            identifier: str,
+            token: str = Depends(verify_api_key),
+        ) -> dict[str, Any]:
+            """Get contact summary from knowledge graph."""
+            kg = getattr(self, "_knowledge_graph", None)
+            if not kg:
+                return {"error": "Knowledge graph not available"}
+            try:
+                return kg.get_contact_summary(identifier)
+            except Exception as e:
+                logger.warning("Contact summary failed: %s", e)
+                return {"error": str(e)}
+
+        # ══════════════════════════════════════════════════════════════════
+        # Patterns — detected patterns + automation proposals
+        # ══════════════════════════════════════════════════════════════════
+
+        @app.get("/api/v1/patterns")
+        async def get_patterns(
+            token: str = Depends(verify_api_key),
+        ) -> dict[str, Any]:
+            """Get detected patterns and automation proposals."""
+            pd = getattr(self, "_pattern_detector", None)
+            if not pd:
+                return {"patterns": [], "automations": [], "summary": {}}
+            try:
+                patterns = pd.get_patterns()
+                strong = pd.get_strong_patterns()
+                automations = pd.propose_automations()
+                summary = pd.summary()
+                return {
+                    "patterns": [
+                        {
+                            "type": p.pattern_type,
+                            "description": p.description,
+                            "occurrences": p.occurrence_count,
+                            "confidence": round(p.avg_confidence, 2),
+                            "strength": p.strength,
+                            "first_seen": p.first_seen,
+                            "last_seen": p.last_seen,
+                        }
+                        for p in patterns
+                    ],
+                    "strong_patterns": [
+                        {"type": p.pattern_type, "description": p.description, "strength": p.strength}
+                        for p in strong
+                    ],
+                    "automations": [
+                        {
+                            "title": a.title,
+                            "description": a.description,
+                            "pattern_type": a.pattern_type,
+                            "confidence": round(a.confidence, 2),
+                        }
+                        for a in automations
+                    ],
+                    "summary": summary,
+                }
+            except Exception as e:
+                logger.warning("Patterns fetch failed: %s", e)
+                return {"patterns": [], "automations": [], "summary": {}, "error": str(e)}
+
+        @app.get("/api/v1/patterns/weekly")
+        async def get_patterns_weekly(
+            token: str = Depends(verify_api_key),
+        ) -> dict[str, Any]:
+            """Get weekly pattern analysis."""
+            pd = getattr(self, "_pattern_detector", None)
+            if not pd:
+                return {"analysis": {}}
+            try:
+                return {"analysis": pd.weekly_analysis()}
+            except Exception as e:
+                logger.warning("Weekly patterns failed: %s", e)
+                return {"analysis": {}, "error": str(e)}
 
         # ══════════════════════════════════════════════════════════════════
         # WebSocket feed for real-time events
@@ -1293,11 +1538,6 @@ def create_api_server(
     except Exception:
         pass
 
-    briefing_gen = None
-    if memory:
-        from omnibrain.briefing import BriefingGenerator
-        briefing_gen = BriefingGenerator(db, memory)
-
     # Create LLM router — uses DeepSeek as primary (cheapest + fast)
     router = None
     try:
@@ -1316,19 +1556,47 @@ def create_api_server(
     except Exception as e:
         logger.warning(f"Failed to create LLM router: {e}")
 
+    briefing_gen = None
+    if memory:
+        from omnibrain.briefing import BriefingGenerator
+        briefing_gen = BriefingGenerator(db, memory, router=router)
+
     # ── Wire ProactiveEngine + PriorityScorer + PatternDetector ──
     engine = None
     pattern_detector = None
+    knowledge_graph = None
+    review_engine = None
     try:
         from omnibrain.proactive.engine import ProactiveEngine
         from omnibrain.proactive.patterns import PatternDetector
+
+        pattern_detector = PatternDetector(db)
+
+        # Wire ReviewEngine — 693 LOC of evening/weekly review logic
+        try:
+            from omnibrain.review_engine import ReviewEngine
+            review_engine = ReviewEngine(db, memory)
+            logger.info("ReviewEngine wired")
+        except Exception as e:
+            logger.warning(f"Failed to create ReviewEngine: {e}")
 
         engine = ProactiveEngine(db, config)
         engine.register_defaults(
             briefing_generator=briefing_gen,
             memory_manager=memory,
+            review_engine=review_engine,
+            pattern_detector=pattern_detector,
         )
-        pattern_detector = PatternDetector(db)
+
+        # Wire KnowledgeGraph — 706 LOC of cross-source query logic
+        if memory:
+            try:
+                from omnibrain.knowledge_graph import KnowledgeGraph
+                knowledge_graph = KnowledgeGraph(db, memory)
+                logger.info("KnowledgeGraph wired")
+            except Exception as e:
+                logger.warning(f"Failed to create KnowledgeGraph: {e}")
+
         logger.info("ProactiveEngine + PatternDetector wired")
     except Exception as e:
         logger.warning(f"Failed to create ProactiveEngine: {e}")
@@ -1340,7 +1608,7 @@ def create_api_server(
         skill_runtime = SkillRuntime(
             db=db,
             memory=memory,
-            knowledge_graph=None,
+            knowledge_graph=knowledge_graph,
             approval_gate=None,
             config=config,
             event_bus=event_bus,
@@ -1384,6 +1652,7 @@ def create_api_server(
     server._pattern_detector = pattern_detector  # type: ignore[attr-defined]
     server._skill_runtime = skill_runtime  # type: ignore[attr-defined]
     server._event_bus = event_bus  # type: ignore[attr-defined]
+    server._knowledge_graph = knowledge_graph  # type: ignore[attr-defined]
 
     # ── Wire EventBus "notification" → WebSocket broadcast ──
     async def _event_bus_to_ws(event_type: str, data: dict[str, Any]) -> None:

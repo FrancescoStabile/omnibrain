@@ -228,7 +228,7 @@ def _cmd_search(query: str, limit: int) -> None:
 
     for i, doc in enumerate(results, 1):
         score_str = f"{doc.score:.3f}" if doc.score else "-"
-        date_str = doc.timestamp.strftime("%Y-%m-%d %H:%M") if doc.timestamp else "-"
+        date_str = doc.timestamp.strftime("%Y-%m-%d %H:%M") if hasattr(doc.timestamp, "strftime") else (str(doc.timestamp)[:16] if doc.timestamp else "-")
         table.add_row(str(i), doc.source_type or doc.source, doc.text[:60], score_str, date_str)
 
     console.print(table)

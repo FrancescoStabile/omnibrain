@@ -151,32 +151,151 @@ class BriefingGenerator:
     """Generates morning/evening/weekly briefings.
 
     Pulls data from the database and memory system, assembles sections,
-    formats into human-readable output.
+    formats into human-readable output. When an LLM router is provided,
+    generates a rich narrative briefing; otherwise falls back to heuristic
+    formatting.
 
     Usage:
-        gen = BriefingGenerator(db, memory_manager)
+        gen = BriefingGenerator(db, memory_manager, router=router)
         data = gen.collect_data(briefing_type="morning")
         text = gen.format_text(data)
         gen.store(data, text)
     """
 
-    def __init__(self, db: Any, memory_manager: Any = None):
+    def __init__(self, db: Any, memory_manager: Any = None, router: Any = None):
         """
         Args:
             db: OmniBrainDB instance.
             memory_manager: Optional MemoryManager for memory highlights.
+            router: Optional LLMRouter for narrative briefing generation.
         """
         self._db = db
         self._memory = memory_manager
+        self._router = router
 
     def generate(self, briefing_type: str = "morning") -> tuple[BriefingData, str]:
-        """Generate a complete briefing. Returns (data, formatted_text)."""
+        """Generate a complete briefing. Returns (data, formatted_text).
+
+        Uses heuristic formatting. For LLM-powered narrative,
+        use ``generate_narrative()`` instead.
+        """
         data = self.collect_data(briefing_type)
         text = self.format_text(data)
         return data, text
 
+    async def generate_narrative(self, briefing_type: str = "morning") -> tuple[BriefingData, str]:
+        """Generate a briefing with LLM narrative if a router is available.
+
+        Falls back to heuristic formatting when no router is configured.
+        Returns (data, formatted_text).
+        """
+        data = self.collect_data(briefing_type)
+
+        if self._router and self._has_meaningful_data(data):
+            try:
+                narrative = await self._llm_format(data)
+                if narrative and len(narrative) > 50:
+                    return data, narrative
+            except Exception as e:
+                logger.warning("LLM briefing generation failed, falling back: %s", e)
+
+        text = self.format_text(data)
+        return data, text
+
+    def _has_meaningful_data(self, data: BriefingData) -> bool:
+        """Check if there's enough data to warrant an LLM call."""
+        return any([
+            data.emails.total > 0,
+            data.calendar.total_events > 0,
+            data.proposals.total_pending > 0,
+            data.priorities,
+            data.observations,
+            data.memory_highlights,
+        ])
+
+    async def _llm_format(self, data: BriefingData) -> str:
+        """Use the LLM to generate a warm, narrative briefing."""
+        import asyncio
+
+        user_name = ""
+        try:
+            user_name = self._db.get_preference("user_name", "")
+        except Exception:
+            pass
+
+        # Build a structured prompt with all available data
+        sections = []
+
+        if data.emails.total > 0:
+            sections.append(
+                f"EMAILS: {data.emails.total} total, {data.emails.unread} unread, "
+                f"{data.emails.urgent} urgent, {data.emails.needs_response} need response. "
+                f"Top senders: {', '.join(data.emails.top_senders[:3]) if data.emails.top_senders else 'none'}."
+            )
+
+        if data.calendar.total_events > 0:
+            events_desc = []
+            for ev in data.calendar.events[:5]:
+                events_desc.append(f"  - {ev.get('time', '')} {ev.get('title', '')} ({ev.get('attendees', 0)} attendees)")
+            section = f"CALENDAR: {data.calendar.total_events} events today ({data.calendar.total_hours:.1f}h)."
+            if data.calendar.next_meeting:
+                section += f" Next: {data.calendar.next_meeting} at {data.calendar.next_meeting_time}."
+            if events_desc:
+                section += "\n" + "\n".join(events_desc)
+            sections.append(section)
+
+        if data.proposals.total_pending > 0:
+            sections.append(
+                f"PENDING ACTIONS: {data.proposals.total_pending} proposals waiting for approval."
+            )
+
+        if data.priorities:
+            pri_desc = [f"  {p.rank}. {p.title} — {p.reason}" for p in data.priorities[:5]]
+            sections.append("PRIORITIES:\n" + "\n".join(pri_desc))
+
+        if data.observations:
+            sections.append("PATTERNS: " + "; ".join(data.observations[:3]))
+
+        if data.memory_highlights:
+            sections.append("WHAT I REMEMBER:\n" + "\n".join(f"  - {h}" for h in data.memory_highlights[:5]))
+
+        data_block = "\n\n".join(sections) if sections else "No data available yet."
+
+        system = (
+            "You are OmniBrain, a warm personal AI companion. "
+            "Generate a concise morning briefing from the data below. "
+            "Be warm but efficient. Use markdown. "
+            "Include only sections that have data. "
+            "If there's conversation memory but no email/calendar, "
+            "focus on what the user shared and what's ahead for them. "
+            "Keep it under 300 words. Don't invent data."
+        )
+
+        prompt = (
+            f"Today: {data.date}\n"
+            f"User: {user_name or 'there'}\n"
+            f"Type: {data.briefing_type}\n\n"
+            f"DATA:\n{data_block}\n\n"
+            "Generate the briefing."
+        )
+
+        response = ""
+        async for chunk in self._router.stream(
+            messages=[{"role": "user", "content": prompt}],
+            system=system,
+        ):
+            if chunk.content:
+                response += chunk.content
+            if chunk.done:
+                break
+
+        return response.strip()
+
     def generate_and_store(self, briefing_type: str = "morning") -> tuple[BriefingData, str, int]:
         """Generate a briefing and store it in the DB.
+
+        Uses heuristic formatting (sync). For LLM narrative,
+        use ``generate_and_store_narrative()`` instead.
 
         Returns:
             Tuple of (data, formatted_text, briefing_id).
@@ -185,10 +304,23 @@ class BriefingGenerator:
         briefing_id = self.store(data, text)
         return data, text, briefing_id
 
+    async def generate_and_store_narrative(self, briefing_type: str = "morning") -> tuple[BriefingData, str, int]:
+        """Generate a briefing with LLM narrative and store it.
+
+        Falls back to heuristic if no router or LLM fails.
+
+        Returns:
+            Tuple of (data, formatted_text, briefing_id).
+        """
+        data, text = await self.generate_narrative(briefing_type)
+        briefing_id = self.store(data, text)
+        return data, text, briefing_id
+
     def collect_data(self, briefing_type: str = "morning") -> BriefingData:
         """Collect all data for a briefing.
 
-        Queries the database for emails, events, proposals, observations.
+        Queries the database for emails, events, proposals, observations,
+        and user context from conversations.
         """
         today = datetime.now().strftime("%Y-%m-%d")
         data = BriefingData(date=today, briefing_type=briefing_type)
@@ -196,7 +328,7 @@ class BriefingGenerator:
         # Emails
         data.emails = self._collect_emails()
 
-        # Calendar
+        # Calendar (Google + chat-extracted events)
         data.calendar = self._collect_calendar()
 
         # Proposals
@@ -205,7 +337,7 @@ class BriefingGenerator:
         # Observations
         data.observations = self._collect_observations()
 
-        # Memory highlights
+        # Memory highlights (conversations + profile + observations)
         if self._memory:
             data.memory_highlights = self._collect_memory_highlights()
 
@@ -311,8 +443,9 @@ class BriefingGenerator:
         if not any([
             data.emails.total, data.calendar.total_events,
             data.proposals.total_pending, data.priorities,
+            data.memory_highlights,
         ]):
-            lines.append("_All quiet today! No events, emails, or pending actions._")
+            lines.append("_All quiet today! Chat with me to get started — the more I know about you, the better your briefings get._")
 
         return "\n".join(lines).strip()
 
@@ -381,11 +514,17 @@ class BriefingGenerator:
         return section
 
     def _collect_calendar(self) -> CalendarSection:
-        """Collect calendar data from DB."""
+        """Collect calendar data from DB (Google Calendar + chat-extracted)."""
         section = CalendarSection()
 
         try:
+            # Google Calendar events
             events = self._db.get_events(source="calendar", limit=30)
+
+            # Also include chat-extracted events (commitments, meetings, etc.)
+            chat_events = self._db.get_events(source="chat", limit=20)
+            if chat_events:
+                events = (events or []) + chat_events
 
             if events:
                 section.total_events = len(events)
@@ -469,16 +608,60 @@ class BriefingGenerator:
             return []
 
     def _collect_memory_highlights(self) -> list[str]:
-        """Get relevant memory highlights for the briefing."""
+        """Get relevant memory highlights for the briefing.
+
+        Reads from ALL memory sources: observations, conversations, profile.
+        This ensures the briefing has content even without Google integration.
+        Conversation entries are cleaned (raw "User: … Assistant: …" stripped)
+        and deduplicated.
+        """
         if not self._memory:
             return []
 
+        highlights: list[str] = []
+        seen: set[str] = set()  # deduplicate by first 80 chars
+
+        def _add(text: str) -> None:
+            key = text[:80].lower().strip()
+            if key not in seen:
+                seen.add(key)
+                highlights.append(text)
+
         try:
-            recent = self._memory.get_recent(max_results=5, source_filter="observation")
-            return [doc.text for doc in recent if doc.text]
+            # Observations (pattern-detected insights)
+            obs_docs = self._memory.get_recent(max_results=3, source_filter="observation")
+            for doc in obs_docs:
+                if doc.text:
+                    _add(doc.text)
+
+            # Recent conversations — extract what the user said, not raw dumps
+            conv_docs = self._memory.get_recent(max_results=5, source_filter="conversation")
+            for doc in conv_docs:
+                if not doc.text:
+                    continue
+                text = doc.text.strip()
+                # Strip "User: … Assistant: …" format — keep only user's message
+                if text.startswith("User:"):
+                    parts = text.split("\nAssistant:", 1)
+                    user_part = parts[0].removeprefix("User:").strip()
+                    if not user_part or len(user_part) < 10:
+                        continue
+                    text = user_part
+                # Trim to digestible length
+                if len(text) > 150:
+                    text = text[:147].strip() + "…"
+                _add(text)
+
+            # User profile (from onboarding)
+            profile_docs = self._memory.get_recent(max_results=2, source_filter="profile")
+            for doc in profile_docs:
+                if doc.text:
+                    _add(doc.text)
+
         except Exception as e:
             logger.warning(f"Failed to collect memory highlights: {e}")
-            return []
+
+        return highlights
 
     def _generate_priorities(self, data: BriefingData) -> list[PriorityItem]:
         """Generate AI-style priority list from collected data.

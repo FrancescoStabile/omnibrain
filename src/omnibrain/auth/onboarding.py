@@ -53,6 +53,10 @@ class OnboardingResult:
     user_name: str = ""
     completed_at: str = ""
     duration_ms: int = 0
+    # Raw data for persistence — previously discarded
+    raw_emails: list[Any] = field(default_factory=list)
+    raw_events: list[Any] = field(default_factory=list)
+    raw_contacts: set[str] = field(default_factory=set)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -158,6 +162,9 @@ class OnboardingAnalyzer:
             user_name=user_name,
             completed_at=datetime.now(timezone.utc).isoformat(),
             duration_ms=duration_ms,
+            raw_emails=emails,
+            raw_events=events,
+            raw_contacts=contacts,
         )
         logger.info(
             "Onboarding complete in %dms: %d emails, %d contacts, %d events, %d insights",

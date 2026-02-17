@@ -26,6 +26,7 @@ import {
   Timer,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
+import { useNavigate } from "@/hooks/useNavigate";
 import {
   api,
   type BriefingData,
@@ -389,17 +390,25 @@ function Stat({
 // ═══════════════════════════════════════════════════════════════════════════
 
 function EmptyBriefing() {
+  const navigate = useNavigate();
+
   return (
     <Card className="py-12">
-      <CardBody className="text-center space-y-3">
-        <Zap className="h-10 w-10 mx-auto text-[var(--brand-primary)] opacity-40" />
+      <CardBody className="text-center space-y-4">
+        <Brain className="h-10 w-10 mx-auto text-[var(--brand-primary)] opacity-40" />
         <p className="text-lg font-medium text-[var(--text-primary)]">
-          Your briefing will appear here
+          Your briefing is building up
         </p>
         <p className="text-sm text-[var(--text-tertiary)] max-w-sm mx-auto">
-          Connect your Google account and let OmniBrain analyze your emails and
-          calendar to generate your first morning briefing.
+          Chat with me about your week, your goals, and your commitments —
+          the more I know, the better your morning briefings get.
         </p>
+        <button
+          onClick={() => navigate("chat")}
+          className="mt-2 px-5 py-2 rounded-full bg-[var(--brand-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
+        >
+          Start chatting
+        </button>
       </CardBody>
     </Card>
   );

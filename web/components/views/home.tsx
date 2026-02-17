@@ -264,6 +264,14 @@ export function HomePage() {
                   {briefingData.proposals.total_pending} pending
                 </span>
               )}
+              {briefingData.memory_highlights.length > 0 &&
+                !briefingData.emails.unread &&
+                !briefingData.calendar.total_events &&
+                !briefingData.proposals.total_pending && (
+                <span className="text-[var(--text-tertiary)]">
+                  {briefingData.memory_highlights.length} memory note{briefingData.memory_highlights.length !== 1 ? "s" : ""}
+                </span>
+              )}
             </div>
           </CardBody>
         </Card>

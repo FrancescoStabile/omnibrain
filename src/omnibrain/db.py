@@ -254,14 +254,22 @@ class OmniBrainDB:
         content: str = "",
         metadata: dict[str, Any] | None = None,
         priority: int = 0,
+        timestamp: str | None = None,
     ) -> int:
         """Insert an event into the event stream. Returns the event ID."""
         with self._connect() as conn:
-            cursor = conn.execute(
-                """INSERT INTO events (source, event_type, title, content, metadata, priority)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (source, event_type, title, content, json.dumps(metadata or {}), priority),
-            )
+            if timestamp:
+                cursor = conn.execute(
+                    """INSERT INTO events (source, event_type, title, content, metadata, priority, timestamp)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (source, event_type, title, content, json.dumps(metadata or {}), priority, timestamp),
+                )
+            else:
+                cursor = conn.execute(
+                    """INSERT INTO events (source, event_type, title, content, metadata, priority)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (source, event_type, title, content, json.dumps(metadata or {}), priority),
+                )
             return cursor.lastrowid or 0
 
     def get_events(
@@ -334,6 +342,35 @@ class OmniBrainDB:
                    notes = COALESCE(NULLIF(excluded.notes, ''), contacts.notes),
                    metadata = excluded.metadata""",
                 data,
+            )
+
+    def upsert_contact_by_name(
+        self,
+        name: str,
+        relationship: str = "other",
+        notes: str = "",
+    ) -> None:
+        """Upsert a contact by name (when email is unknown, e.g. from chat extraction).
+
+        Uses a synthetic email placeholder so the contact can still be tracked.
+        If a contact with the same name already exists, updates the record.
+        """
+        # Generate a stable placeholder email from the name
+        slug = name.lower().replace(" ", ".").strip(".")
+        placeholder_email = f"{slug}@contact.local"
+
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO contacts (email, name, relationship, notes, last_interaction, interaction_count)
+                   VALUES (?, ?, ?, ?, datetime('now'), 1)
+                   ON CONFLICT(email) DO UPDATE SET
+                   name = COALESCE(NULLIF(excluded.name, ''), contacts.name),
+                   relationship = CASE WHEN excluded.relationship != 'other'
+                                       THEN excluded.relationship ELSE contacts.relationship END,
+                   notes = CASE WHEN excluded.notes != '' THEN excluded.notes ELSE contacts.notes END,
+                   last_interaction = datetime('now'),
+                   interaction_count = contacts.interaction_count + 1""",
+                (placeholder_email, name, relationship, notes),
             )
 
     def get_contact(self, email: str) -> ContactInfo | None:

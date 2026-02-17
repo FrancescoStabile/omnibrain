@@ -215,7 +215,11 @@ def _generate_insights(
     email_count: int,
     event_count: int,
 ) -> list[InsightCard]:
-    """Generate 3-5 insight cards from the fetched data."""
+    """Generate 3-5 insight cards from the fetched data.
+
+    Each card uses emotive "WTF" micro-copy designed to make the user
+    feel the AI already knows them deeply.
+    """
     cards: list[InsightCard] = []
 
     # ── Busiest sender ──
@@ -231,8 +235,13 @@ def _generate_insights(
             name = _extract_display_name(top_sender)
             cards.append(InsightCard(
                 icon="mail",
-                title="Your top correspondent",
-                body=f"{name} sent you {top_count} emails this week.",
+                title=f"Did you know? {name} sent you {top_count} emails",
+                body=(
+                    f"That's your #1 correspondent this week. "
+                    f"I'll remember every conversation so you never lose context."
+                ),
+                action="Ask me what they said",
+                action_type="draft_email",
                 priority=3,
             ))
 
@@ -243,11 +252,15 @@ def _generate_insights(
             if hasattr(e, "start_time") and _is_today(e.start_time)
         ]
         if today_events:
+            first_title = today_events[0].title if hasattr(today_events[0], "title") else "meeting"
             cards.append(InsightCard(
                 icon="calendar",
-                title=f"{len(today_events)} meeting{'s' if len(today_events) != 1 else ''} today",
-                body=f"Your next is '{today_events[0].title}' — let me brief you.",
-                action="View schedule",
+                title=f"Heads up — {len(today_events)} meeting{'s' if len(today_events) != 1 else ''} today",
+                body=(
+                    f"Your next is \"{first_title}\". "
+                    f"I already have the context from last time — want a brief?"
+                ),
+                action="Brief me",
                 action_type="view_event",
                 priority=5,
             ))
@@ -255,7 +268,10 @@ def _generate_insights(
             cards.append(InsightCard(
                 icon="calendar",
                 title=f"{event_count} events this week",
-                body="Your schedule is filling up. Want a summary?",
+                body=(
+                    "Your week is filling up. "
+                    "I'll prepare briefs before every meeting so you never walk in cold."
+                ),
                 action="View schedule",
                 action_type="view_event",
                 priority=2,
@@ -267,8 +283,11 @@ def _generate_insights(
         if unread > 5:
             cards.append(InsightCard(
                 icon="inbox",
-                title=f"{unread} unread emails",
-                body="I can prioritise these for you and surface what matters.",
+                title=f"You have {unread} unread emails piling up",
+                body=(
+                    "I can triage them in seconds — surface what's urgent, "
+                    "draft replies for what matters, and silence the rest."
+                ),
                 action="Install Email Manager",
                 action_type="add_skill",
                 priority=4,
@@ -278,8 +297,11 @@ def _generate_insights(
     if contacts:
         cards.append(InsightCard(
             icon="users",
-            title=f"{len(contacts)} people in your network",
-            body="I'll remember who everyone is and your history together.",
+            title=f"I mapped {len(contacts)} people in your network",
+            body=(
+                "I already know who they are and how you interact. "
+                "I'll never let you forget a follow-up again."
+            ),
             priority=1,
         ))
 
@@ -287,8 +309,11 @@ def _generate_insights(
     if not cards:
         cards.append(InsightCard(
             icon="sparkles",
-            title="You're all set!",
-            body="I'm learning about you. The more we interact, the smarter I get.",
+            title="I'm learning about you",
+            body=(
+                "The more we interact, the more useful I become. "
+                "Tomorrow morning, I'll surprise you with your first briefing."
+            ),
             priority=0,
         ))
 

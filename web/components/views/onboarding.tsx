@@ -13,6 +13,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Share2, Download, Puzzle, ArrowRight } from "lucide-react";
 import { api, streamChat } from "@/lib/api";
 import type { InsightCard as InsightCardType, OnboardingResult } from "@/lib/api";
 import { useStore } from "@/lib/store";
@@ -255,10 +256,10 @@ function ConnectStep({ onConnected, onSkip }: { onConnected: () => void; onSkip:
 // ═══════════════════════════════════════════════════════════════════════════
 
 const ANALYSIS_PHASES = [
-  { label: "Reading your emails", icon: "📧", duration: 3000 },
-  { label: "Learning your contacts", icon: "👥", duration: 2500 },
-  { label: "Understanding your schedule", icon: "📅", duration: 2500 },
-  { label: "Generating insights", icon: "✨", duration: 2000 },
+  { label: "Reading your emails", icon: "📧", duration: 2500 },
+  { label: "Learning your contacts", icon: "👥", duration: 2000 },
+  { label: "Understanding your schedule", icon: "📅", duration: 2000 },
+  { label: "Generating insights", icon: "✨", duration: 1500 },
 ] as const;
 
 function AnalyzingStep({
@@ -378,28 +379,34 @@ function AnalyzingStep({
 function InsightCardComponent({
   card,
   index,
-}: { card: InsightCardType; index: number }) {
+  onAction,
+}: { card: InsightCardType; index: number; onAction?: (card: InsightCardType) => void }) {
   const iconMap: Record<string, string> = {
     mail: "📧",
     calendar: "📅",
     inbox: "📥",
     users: "👥",
     sparkles: "✨",
+    alert: "⚠️",
+    trend: "📈",
   };
 
   return (
     <div
-      className="p-4 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border-default)] animate-in fade-in slide-in-from-bottom-4"
+      className="p-4 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border-default)] animate-in fade-in slide-in-from-bottom-4 hover:border-[var(--brand-primary)]/40 transition-colors"
       style={{ animationDelay: `${600 + index * 200}ms`, animationFillMode: "both" }}
     >
       <div className="flex items-start gap-3">
         <span className="text-xl">{iconMap[card.icon] || "💡"}</span>
         <div className="flex-1 min-w-0">
           <h4 className="font-semibold text-sm mb-1">{card.title}</h4>
-          <p className="text-xs text-[var(--text-secondary)]">{card.body}</p>
-          {card.action && (
-            <button className="mt-2 text-xs text-[var(--brand-primary)] hover:underline">
-              {card.action} →
+          <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{card.body}</p>
+          {card.action && onAction && (
+            <button
+              onClick={() => onAction(card)}
+              className="mt-2 text-xs font-medium text-[var(--brand-primary)] hover:underline flex items-center gap-1"
+            >
+              {card.action} <ArrowRight className="h-3 w-3" />
             </button>
           )}
         </div>
@@ -408,21 +415,143 @@ function InsightCardComponent({
   );
 }
 
+/** Skill recommendations based on what was discovered during onboarding */
+function SkillRecommendations({ result, onInstall }: { result: OnboardingResult; onInstall: (name: string) => void }) {
+  const recs: { name: string; label: string; icon: string; reason: string }[] = [];
+
+  if ((result.stats.emails ?? 0) > 0) {
+    recs.push({ name: "email-manager", label: "Email Manager", icon: "📧", reason: `${result.stats.emails} emails found — let me triage them for you` });
+  }
+  if ((result.stats.events ?? 0) > 0) {
+    recs.push({ name: "calendar-assistant", label: "Calendar Assistant", icon: "📅", reason: `${result.stats.events} events this week — I'll brief you before each one` });
+  }
+  recs.push({ name: "morning-briefing", label: "Morning Briefing", icon: "☀️", reason: "Wake up to a personalised summary every day" });
+
+  if (recs.length === 0) return null;
+
+  return (
+    <div
+      className="w-full space-y-2 mb-8 animate-in fade-in duration-700"
+      style={{ animationDelay: "1000ms", animationFillMode: "both" }}
+    >
+      <p className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider mb-2 flex items-center gap-1">
+        <Puzzle className="h-3 w-3" /> Recommended Skills
+      </p>
+      {recs.map((r) => (
+        <button
+          key={r.name}
+          onClick={() => onInstall(r.name)}
+          className="w-full flex items-center gap-3 p-3 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border-default)] hover:border-[var(--brand-primary)]/50 transition-colors text-left"
+        >
+          <span className="text-lg">{r.icon}</span>
+          <div className="flex-1 min-w-0">
+            <span className="text-sm font-medium text-[var(--text-primary)]">{r.label}</span>
+            <p className="text-xs text-[var(--text-tertiary)] truncate">{r.reason}</p>
+          </div>
+          <span className="text-xs text-[var(--brand-primary)] font-medium">Install</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Generate a shareable card image from the reveal stats */
+function ShareButton({ result }: { result: OnboardingResult }) {
+  const [shared, setShared] = useState(false);
+
+  const handleShare = useCallback(async () => {
+    // Build a share text
+    const text = [
+      `🧠 My AI just analyzed my digital life in 30 seconds:`,
+      `📧 ${result.stats.emails || 0} emails scanned`,
+      `👥 ${result.stats.contacts || 0} contacts mapped`,
+      `📅 ${result.stats.events || 0} events tracked`,
+      result.insights[0] ? `\n💡 "${result.insights[0].title}: ${result.insights[0].body}"` : "",
+      `\nTry it free → github.com/FrancescoStabile/omnibrain`,
+    ].filter(Boolean).join("\n");
+
+    // Try native share API first
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: "OmniBrain", text });
+        setShared(true);
+        setTimeout(() => setShared(false), 2000);
+        return;
+      } catch { /* user cancelled */ }
+    }
+
+    // Fallback: copy to clipboard
+    try {
+      await navigator.clipboard.writeText(text);
+      setShared(true);
+      setTimeout(() => setShared(false), 2000);
+    } catch { /* ignore */ }
+  }, [result]);
+
+  return (
+    <button
+      onClick={handleShare}
+      className="flex items-center gap-2 text-xs text-[var(--text-tertiary)] hover:text-[var(--brand-primary)] transition-colors"
+    >
+      <Share2 className="h-3.5 w-3.5" />
+      {shared ? "Copied! 🎉" : "Share your results"}
+    </button>
+  );
+}
+
 function RevealStep({
   result,
   onFinish,
 }: { result: OnboardingResult; onFinish: () => void }) {
   const { stats } = result;
+  const setView = useStore((s) => s.setView);
+  const setOnboardingComplete = useStore((s) => s.setOnboardingComplete);
+  const [installing, setInstalling] = useState<string | null>(null);
+
+  // Auto-generate first briefing in background
+  useEffect(() => {
+    api.generateBriefing("morning").catch(() => {});
+  }, []);
+
+  const handleInsightAction = useCallback((card: InsightCardType) => {
+    // Navigate based on action_type
+    setOnboardingComplete(true);
+    if (card.action_type === "view_event") {
+      setView("briefing");
+    } else if (card.action_type === "add_skill") {
+      setView("skills");
+    } else if (card.action_type === "draft_email") {
+      setView("chat");
+    } else {
+      setView("home");
+    }
+  }, [setOnboardingComplete, setView]);
+
+  const handleInstallSkill = useCallback(async (name: string) => {
+    setInstalling(name);
+    try {
+      await api.installSkill(name);
+    } catch { /* ignore — may already be installed */ }
+    setInstalling(null);
+  }, []);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[80vh] px-6 py-12 max-w-lg mx-auto">
       {/* Greeting */}
       <h2
-        className="text-3xl font-bold mb-8 animate-in fade-in duration-1000"
+        className="text-3xl font-bold mb-2 animate-in fade-in duration-1000"
         style={{ animationFillMode: "both" }}
       >
         {result.greeting}
       </h2>
+      {result.duration_ms > 0 && (
+        <p
+          className="text-xs text-[var(--text-tertiary)] mb-8 animate-in fade-in duration-700"
+          style={{ animationDelay: "200ms", animationFillMode: "both" }}
+        >
+          Analyzed in {(result.duration_ms / 1000).toFixed(1)}s ⚡
+        </p>
+      )}
 
       {/* Stats row */}
       <div
@@ -453,18 +582,29 @@ function RevealStep({
 
       {/* Insight cards */}
       {result.insights.length > 0 && (
-        <div className="w-full space-y-3 mb-10">
+        <div className="w-full space-y-3 mb-8">
           {result.insights.map((card, i) => (
-            <InsightCardComponent key={i} card={card} index={i} />
+            <InsightCardComponent key={i} card={card} index={i} onAction={handleInsightAction} />
           ))}
         </div>
       )}
+
+      {/* Skill recommendations */}
+      <SkillRecommendations result={result} onInstall={handleInstallSkill} />
+
+      {/* Share */}
+      <div
+        className="mb-8 animate-in fade-in duration-700"
+        style={{ animationDelay: "1400ms", animationFillMode: "both" }}
+      >
+        <ShareButton result={result} />
+      </div>
 
       {/* Continue */}
       <button
         onClick={onFinish}
         className="px-8 py-3 rounded-xl font-semibold text-white bg-gradient-to-r from-[var(--brand-primary)] to-[var(--accent-orange)] hover:opacity-90 transition-opacity shadow-lg shadow-[var(--brand-primary)]/25 animate-in fade-in duration-700"
-        style={{ animationDelay: "1200ms", animationFillMode: "both" }}
+        style={{ animationDelay: "1600ms", animationFillMode: "both" }}
       >
         Let&rsquo;s go
       </button>

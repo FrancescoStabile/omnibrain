@@ -17,6 +17,8 @@ import {
   Check,
   X,
   Timer,
+  MessageCircle,
+  Puzzle,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { api, type Briefing, type BriefingData, type Proposal } from "@/lib/api";
@@ -282,10 +284,24 @@ export function HomePage() {
           </div>
         ) : proposals.length === 0 ? (
           <Card>
-            <CardBody className="text-center py-8" role="status">
+            <CardBody className="text-center py-8 space-y-4" role="status">
               <p className="text-[var(--text-tertiary)]">
-                Nothing needs your attention. Enjoy the calm.
+                Nothing needs your attention right now. Enjoy the calm. ☀️
               </p>
+              <div className="flex flex-wrap justify-center gap-2">
+                <button
+                  onClick={() => setView("chat")}
+                  className="px-4 py-2 rounded-full bg-[var(--bg-tertiary)] text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors flex items-center gap-1.5"
+                >
+                  <MessageCircle className="h-3.5 w-3.5" /> Chat with me
+                </button>
+                <button
+                  onClick={() => setView("skills")}
+                  className="px-4 py-2 rounded-full bg-[var(--bg-tertiary)] text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors flex items-center gap-1.5"
+                >
+                  <Puzzle className="h-3.5 w-3.5" /> Explore Skills
+                </button>
+              </div>
             </CardBody>
           </Card>
         ) : (

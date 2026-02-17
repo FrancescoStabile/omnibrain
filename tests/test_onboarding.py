@@ -132,7 +132,7 @@ class TestGenerateInsights:
             event_count=0,
         )
         titles = [c.title for c in cards]
-        assert any("correspondent" in t.lower() for t in titles)
+        assert any("sent you" in t.lower() or "correspondent" in t.lower() for t in titles)
 
     def test_today_meetings(self) -> None:
         events = [

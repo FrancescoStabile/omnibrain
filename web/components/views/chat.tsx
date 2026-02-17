@@ -6,7 +6,7 @@
 
 "use client";
 
-import { useRef, useState, useEffect, type FormEvent } from "react";
+import { useRef, useState, useEffect, useMemo, type FormEvent } from "react";
 import { Send, Sparkles, Brain, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -16,15 +16,53 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Suggested Prompts (empty state)
+// Suggested Prompts (empty state) — contextual if onboarding result exists
 // ═══════════════════════════════════════════════════════════════════════════
 
-const suggestions = [
+const DEFAULT_SUGGESTIONS = [
   "What happened while I was asleep?",
   "What did Marco say about pricing?",
   "Summarize this week",
   "Show me unanswered emails",
 ];
+
+function buildSuggestions(onboardingResult: ReturnType<typeof useStore.getState>["onboardingResult"]): string[] {
+  if (!onboardingResult) return DEFAULT_SUGGESTIONS;
+
+  const suggestions: string[] = [];
+  const stats = onboardingResult.stats || {};
+  const insights = onboardingResult.insights || [];
+
+  // Add personalised suggestions based on what was discovered
+  if (stats.emails > 0) {
+    suggestions.push("Show me my most important emails");
+  }
+  if (stats.events > 0) {
+    suggestions.push("What's on my calendar this week?");
+  }
+  if (stats.contacts > 5) {
+    suggestions.push("Who are my top contacts?");
+  }
+
+  // Use insight data for targeted suggestions
+  for (const card of insights.slice(0, 2)) {
+    if (card.icon === "mail" && card.title.includes("correspondent")) {
+      const name = card.body.split(" sent")[0];
+      if (name) suggestions.push(`What did ${name} write about?`);
+    }
+    if (card.icon === "calendar" && card.title.includes("meeting")) {
+      suggestions.push("Brief me for my next meeting");
+    }
+  }
+
+  // Ensure we always have 4 suggestions
+  const remaining = DEFAULT_SUGGESTIONS.filter((s) => !suggestions.includes(s));
+  while (suggestions.length < 4 && remaining.length) {
+    suggestions.push(remaining.shift()!);
+  }
+
+  return suggestions.slice(0, 4);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Chat Bubble
@@ -114,11 +152,13 @@ export function ChatPage() {
     messages, addMessage, appendToLastAssistant, setMessages,
     chatLoading, setChatLoading,
     chatSessionId, setChatSessionId,
+    onboardingResult,
   } = useStore();
   const [input, setInput] = useState("");
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const suggestions = useMemo(() => buildSuggestions(onboardingResult), [onboardingResult]);
 
   // Load chat history from backend on mount (session persistence)
   useEffect(() => {

@@ -621,14 +621,14 @@ def _sanitize_fts_query(query: str) -> str:
         else:
             cleaned += " "
 
-    # Split into words and join with OR for fuzzy matching
+    # Split into words and join with AND for precise matching
     words = [w.strip() for w in cleaned.split() if w.strip()]
     if not words:
         return ""
 
     # Use quoted terms for exact word matching
     quoted = [f'"{w}"' for w in words]
-    return " OR ".join(quoted)
+    return " AND ".join(quoted)
 
 
 def _row_to_doc(row: sqlite3.Row) -> MemoryDocument:

@@ -21,6 +21,9 @@ import {
   Sun,
   Menu,
   X,
+  Clock,
+  Users,
+  Brain,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -30,6 +33,9 @@ const navItems = [
   { id: "home" as const, label: "Home", icon: Home },
   { id: "briefing" as const, label: "Briefing", icon: Sun },
   { id: "chat" as const, label: "Chat", icon: MessageSquare },
+  { id: "timeline" as const, label: "Timeline", icon: Clock },
+  { id: "contacts" as const, label: "Contacts", icon: Users },
+  { id: "knowledge" as const, label: "Knowledge", icon: Brain },
   { id: "skills" as const, label: "Skills", icon: Puzzle },
   { id: "settings" as const, label: "Settings", icon: Settings },
 ];
@@ -67,6 +73,9 @@ export function Sidebar() {
     home: "/",
     briefing: "/briefing",
     chat: "/chat",
+    timeline: "/timeline",
+    contacts: "/contacts",
+    knowledge: "/knowledge",
     skills: "/skills",
     settings: "/settings",
   };

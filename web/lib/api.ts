@@ -144,6 +144,39 @@ export interface ChatSession {
   last_message_at: string;
 }
 
+export interface TimelineItem {
+  id: string;
+  type: "event" | "proposal" | "observation";
+  source: string;
+  title: string;
+  timestamp: string;
+  metadata: string;
+}
+
+export interface KnowledgeReference {
+  text: string;
+  source: string;
+  date?: string;
+  score?: number;
+}
+
+export interface Pattern {
+  type: string;
+  description: string;
+  occurrences?: number;
+  confidence?: number;
+  strength: string;
+  first_seen?: string;
+  last_seen?: string;
+}
+
+export interface Automation {
+  title: string;
+  description: string;
+  pattern_type: string;
+  confidence: number;
+}
+
 export interface Settings {
   profile: {
     name: string;
@@ -380,6 +413,32 @@ export const api = {
   // ── Contacts ──
   getContacts: (limit = 100) =>
     request<Contact[]>(`/contacts?limit=${limit}`),
+
+  // ── Timeline ──
+  getTimeline: (params: { source?: string; since?: string; until?: string; limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.source) q.set("source", params.source);
+    if (params.since) q.set("since", params.since);
+    if (params.until) q.set("until", params.until);
+    if (params.limit) q.set("limit", String(params.limit));
+    if (params.offset) q.set("offset", String(params.offset));
+    return request<{ items: TimelineItem[]; total: number; offset: number; limit: number }>(`/timeline?${q}`);
+  },
+
+  // ── Knowledge ──
+  queryKnowledge: (q: string) =>
+    request<{ summary: string; references: KnowledgeReference[]; source_count?: number; error?: string }>(
+      `/knowledge/query?q=${encodeURIComponent(q)}`
+    ),
+
+  getKnowledgeContact: (identifier: string) =>
+    request<Record<string, unknown>>(`/knowledge/contact/${encodeURIComponent(identifier)}`),
+
+  // ── Patterns ──
+  getPatterns: () =>
+    request<{ patterns: Pattern[]; strong_patterns: Pattern[]; automations: Automation[]; summary: Record<string, unknown> }>(
+      "/patterns"
+    ),
 
   // ── OAuth ──
   getOAuthUrl: (scope = "gmail+calendar") => {

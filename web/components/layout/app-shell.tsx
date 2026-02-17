@@ -16,6 +16,9 @@ import { ChatPage } from "@/components/views/chat";
 import { SkillsPage } from "@/components/views/skills";
 import { SettingsPage } from "@/components/views/settings";
 import { OnboardingPage } from "@/components/views/onboarding";
+import { TimelinePage } from "@/components/views/timeline";
+import { ContactsPage } from "@/components/views/contacts";
+import { KnowledgePage } from "@/components/views/knowledge";
 import { api, ApiError, setApiErrorHandler } from "@/lib/api";
 import { useStore, type View } from "@/lib/store";
 import { ToastProvider, useToast } from "@/components/ui/toast";
@@ -27,6 +30,9 @@ const views: Record<string, React.FC> = {
   home: HomePage,
   briefing: BriefingPage,
   chat: ChatPage,
+  timeline: TimelinePage,
+  contacts: ContactsPage,
+  knowledge: KnowledgePage,
   skills: SkillsPage,
   settings: SettingsPage,
   onboarding: OnboardingPage,

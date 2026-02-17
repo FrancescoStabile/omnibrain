@@ -7,7 +7,7 @@
 "use client";
 
 import { useRef, useState, useEffect, useMemo, useCallback, type FormEvent, type KeyboardEvent } from "react";
-import { Send, Sparkles, Brain, Copy, RotateCcw, AlertCircle } from "lucide-react";
+import { Send, Sparkles, Brain, Copy, RotateCcw, AlertCircle, Plus, Trash2, MessageSquare, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useStore, type View } from "@/lib/store";
@@ -152,12 +152,13 @@ export function ChatPage() {
   const {
     messages, addMessage, appendToLastAssistant, setMessages,
     chatLoading, setChatLoading,
-    chatSessionId, setChatSessionId,
+    chatSessionId, setChatSessionId, chatSessions, setChatSessions,
     onboardingResult,
   } = useStore();
   const [input, setInput] = useState("");
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [failedMessage, setFailedMessage] = useState<string | null>(null);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const navigate = useNavigate();
@@ -170,6 +171,11 @@ export function ChatPage() {
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 200) + "px";
   }, []);
+
+  // Load sessions list
+  useEffect(() => {
+    api.getChatSessions(50).then((d) => setChatSessions(d.sessions)).catch(() => {});
+  }, [setChatSessions]);
 
   // Load chat history from backend on mount (session persistence)
   useEffect(() => {
@@ -271,6 +277,36 @@ export function ChatPage() {
     }
   };
 
+  const startNewChat = () => {
+    const newId = `session-${Date.now()}`;
+    setChatSessionId(newId);
+    setMessages([]);
+    setHistoryLoaded(true);
+    setFailedMessage(null);
+    inputRef.current?.focus();
+    // Refresh sessions list
+    api.getChatSessions(50).then((d) => setChatSessions(d.sessions)).catch(() => {});
+  };
+
+  const switchSession = async (sessionId: string) => {
+    if (sessionId === chatSessionId) return;
+    setChatSessionId(sessionId);
+    setHistoryLoaded(false);
+    setMessages([]);
+    setFailedMessage(null);
+    setSessionsOpen(false);
+  };
+
+  const deleteSession = async (sessionId: string) => {
+    try {
+      await api.deleteChatSession(sessionId);
+      setChatSessions(chatSessions.filter((s) => s.session_id !== sessionId));
+      if (sessionId === chatSessionId) startNewChat();
+    } catch {
+      // Ignore delete errors
+    }
+  };
+
   const handleAction = useCallback(
     (action: ChatAction) => {
       switch (action.type) {
@@ -317,6 +353,68 @@ export function ChatPage() {
 
   return (
     <div className="flex flex-col h-full">
+      {/* ── Header with session controls ── */}
+      <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-4 py-2">
+        <Button
+          variant="icon"
+          size="sm"
+          onClick={() => setSessionsOpen(!sessionsOpen)}
+          title="Chat sessions"
+        >
+          {sessionsOpen ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+        </Button>
+        <span className="text-sm font-medium text-[var(--text-secondary)] truncate flex-1">
+          {chatSessionId === "default" ? "Chat" : chatSessionId.replace("session-", "Chat #")}
+        </span>
+        <Button variant="ghost" size="sm" onClick={startNewChat} title="New chat">
+          <Plus className="h-4 w-4 mr-1" /> New
+        </Button>
+      </div>
+
+      <div className="flex flex-1 min-h-0">
+        {/* ── Session Sidebar ── */}
+        {sessionsOpen && (
+          <div className="w-56 shrink-0 border-r border-[var(--border-subtle)] overflow-y-auto bg-[var(--bg-secondary)]">
+            <div className="p-2 space-y-1">
+              {chatSessions.length === 0 && (
+                <p className="px-2 py-4 text-xs text-muted-foreground text-center">No sessions yet</p>
+              )}
+              {chatSessions.map((s) => (
+                <div
+                  key={s.session_id}
+                  className={cn(
+                    "group flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs cursor-pointer transition-colors",
+                    s.session_id === chatSessionId
+                      ? "bg-[var(--brand-glow)] text-[var(--brand-primary)]"
+                      : "text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)]",
+                  )}
+                  onClick={() => switchSession(s.session_id)}
+                >
+                  <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate">
+                      {s.session_id === "default" ? "Main Chat" : s.session_id.replace("session-", "#")}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">{s.message_count} msgs</p>
+                  </div>
+                  <button
+                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteSession(s.session_id);
+                    }}
+                    title="Delete session"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Main chat area ── */}
+        <div className="flex flex-col flex-1 min-w-0">
       {/* ── Messages ── */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
         {isEmpty ? (
@@ -404,6 +502,8 @@ export function ChatPage() {
             <Send className="h-4 w-4" />
           </Button>
         </form>
+      </div>
+        </div>
       </div>
     </div>
   );

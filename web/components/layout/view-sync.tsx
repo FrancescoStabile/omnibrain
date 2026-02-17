@@ -15,6 +15,9 @@ const pathToView: Record<string, View> = {
   "/": "home",
   "/chat": "chat",
   "/briefing": "briefing",
+  "/timeline": "timeline",
+  "/contacts": "contacts",
+  "/knowledge": "knowledge",
   "/skills": "skills",
   "/settings": "settings",
 };

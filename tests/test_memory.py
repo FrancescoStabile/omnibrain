@@ -612,7 +612,7 @@ class TestHelpers:
         q = _sanitize_fts_query("budget meeting")
         assert '"budget"' in q
         assert '"meeting"' in q
-        assert "OR" in q
+        assert "AND" in q
 
     def test_sanitize_fts_query_special_chars(self):
         q = _sanitize_fts_query("user@example.com (test)")

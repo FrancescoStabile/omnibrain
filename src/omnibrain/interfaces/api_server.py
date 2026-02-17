@@ -70,7 +70,7 @@ logger = logging.getLogger("omnibrain.api")
 # Lazy import FastAPI — allows using formatters/helpers without the server
 _fastapi_available = False
 try:
-    from fastapi import Depends, FastAPI, HTTPException, Query, Security, WebSocket, WebSocketDisconnect
+    from fastapi import Depends, FastAPI, HTTPException, Query, Response, Security, WebSocket, WebSocketDisconnect
     from fastapi.responses import RedirectResponse, StreamingResponse
     from fastapi.security import APIKeyHeader
     from pydantic import BaseModel
@@ -343,9 +343,21 @@ class OmniBrainAPIServer:
                 allow_credentials=True,
                 allow_methods=["*"],
                 allow_headers=["*"],
+                expose_headers=["X-Data-Generated-At", "X-Response-Time"],
             )
         except ImportError:
             logger.warning("CORSMiddleware not available")
+
+        # ── Timing + freshness middleware ──
+        @self.app.middleware("http")
+        async def add_timing_headers(request, call_next):  # type: ignore[no-untyped-def]
+            import time as _time
+            start = _time.perf_counter()
+            response = await call_next(request)
+            elapsed_ms = round((_time.perf_counter() - start) * 1000, 1)
+            response.headers["X-Response-Time"] = f"{elapsed_ms}ms"
+            response.headers["X-Data-Generated-At"] = datetime.now().isoformat()
+            return response
 
         self._register_routes()
 
@@ -830,17 +842,6 @@ class OmniBrainAPIServer:
                 response="I'm OmniBrain. No LLM API key is configured yet — check your .env file.",
                 source="none",
             )
-
-        # ── POST /api/v1/proposals/{id}/snooze ──
-
-        @app.post("/api/v1/proposals/{proposal_id}/snooze", response_model=ProposalActionResponse)
-        async def snooze_proposal(
-            proposal_id: int, token: str = Depends(verify_api_key),
-        ) -> ProposalActionResponse:
-            ok = self._db.update_proposal_status(proposal_id, "snoozed")
-            if not ok:
-                raise HTTPException(status_code=404, detail=f"Proposal {proposal_id} not found")
-            return ProposalActionResponse(ok=True, proposal_id=proposal_id, new_status="snoozed")
 
         # ══════════════════════════════════════════════════════════════════
         # Skills endpoints

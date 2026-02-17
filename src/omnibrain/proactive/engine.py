@@ -349,7 +349,10 @@ class ProactiveEngine:
     async def _check_calendar(self) -> None:
         """Check upcoming meetings and propose briefs for important ones."""
         try:
-            events = self._db.get_events(source="calendar", limit=20)
+            # Fetch recent calendar events (last 7 days) — the loop below
+            # filters to those starting within 2 hours from now.
+            since_cutoff = datetime.now() - timedelta(days=7)
+            events = self._db.get_events(source="calendar", since=since_cutoff, limit=50)
 
             import json
             now = datetime.now()

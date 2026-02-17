@@ -22,7 +22,7 @@ import json
 import logging
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Generator
 
@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS events (
     content TEXT,
     metadata TEXT,
     processed BOOLEAN DEFAULT 0,
-    priority INTEGER DEFAULT 0
+    priority INTEGER DEFAULT 0,
+    UNIQUE(source, event_type, title, timestamp) ON CONFLICT REPLACE
 );
 
 -- Contacts knowledge base
@@ -217,7 +218,7 @@ class OmniBrainDB:
         self._ensure_initialized()
 
     def _ensure_initialized(self) -> None:
-        """Create tables if they don't exist."""
+        """Create tables if they don't exist and run migrations."""
         self.data_dir.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(SCHEMA_SQL)
@@ -226,7 +227,60 @@ class OmniBrainDB:
                 "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
                 ("schema_version", str(SCHEMA_VERSION)),
             )
+            # Migration: add UNIQUE constraint to events if missing
+            self._migrate_events_unique(conn)
+            # Migration: add snoozed_until column to proposals if missing
+            self._migrate_proposals_snooze(conn)
         logger.info(f"Database initialized at {self.db_path}")
+
+    def _migrate_events_unique(self, conn: sqlite3.Connection) -> None:
+        """Ensure events table has the UNIQUE constraint on (source, event_type, title, timestamp)."""
+        # Check if the constraint already exists by inspecting the CREATE TABLE statement
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='events'"
+        ).fetchone()
+        if row and "UNIQUE" not in (row[0] or ""):
+            logger.info("Migrating events table: adding UNIQUE constraint")
+            # Deduplicate existing data first
+            conn.execute(
+                """DELETE FROM events WHERE rowid NOT IN (
+                       SELECT MIN(rowid) FROM events
+                       GROUP BY source, event_type, title, timestamp
+                   )"""
+            )
+            # Rebuild table with constraint
+            conn.execute("ALTER TABLE events RENAME TO events_old")
+            conn.executescript("""
+                CREATE TABLE events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+                    source TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    content TEXT,
+                    metadata TEXT,
+                    processed BOOLEAN DEFAULT 0,
+                    priority INTEGER DEFAULT 0,
+                    UNIQUE(source, event_type, title, timestamp) ON CONFLICT REPLACE
+                );
+            """)
+            conn.execute(
+                """INSERT INTO events (id, timestamp, source, event_type, title,
+                   content, metadata, processed, priority)
+                   SELECT id, timestamp, source, event_type, title,
+                   content, metadata, processed, priority FROM events_old"""
+            )
+            conn.execute("DROP TABLE events_old")
+            # Rebuild FTS
+            conn.execute("INSERT INTO events_fts(events_fts) VALUES('rebuild')")
+            logger.info("Events table migration complete")
+
+    def _migrate_proposals_snooze(self, conn: sqlite3.Connection) -> None:
+        """Add snoozed_until column to proposals if missing."""
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(proposals)").fetchall()]
+        if "snoozed_until" not in cols:
+            conn.execute("ALTER TABLE proposals ADD COLUMN snoozed_until TEXT")
+            logger.info("Added snoozed_until column to proposals")
 
     @contextmanager
     def _connect(self) -> Generator[sqlite3.Connection, None, None]:
@@ -277,6 +331,7 @@ class OmniBrainDB:
         source: str | None = None,
         event_type: str | None = None,
         since: datetime | None = None,
+        until: datetime | None = None,
         limit: int = 100,
         unprocessed_only: bool = False,
     ) -> list[dict[str, Any]]:
@@ -291,8 +346,14 @@ class OmniBrainDB:
             query += " AND event_type = ?"
             params.append(event_type)
         if since:
-            query += " AND timestamp >= ?"
-            params.append(since.isoformat())
+            # Use replace to handle both 'T' and ' ' separators in stored timestamps
+            ts = since.strftime("%Y-%m-%d %H:%M:%S")
+            query += " AND replace(timestamp, 'T', ' ') >= ?"
+            params.append(ts)
+        if until:
+            ts = until.strftime("%Y-%m-%d %H:%M:%S")
+            query += " AND replace(timestamp, 'T', ' ') <= ?"
+            params.append(ts)
         if unprocessed_only:
             query += " AND processed = 0"
 
@@ -475,6 +536,7 @@ class OmniBrainDB:
         days: int = 30,
     ) -> list[dict[str, Any]]:
         """Get observations with optional filters."""
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
         query = "SELECT * FROM observations WHERE confidence >= ?"
         params: list[Any] = [min_confidence]
 
@@ -482,7 +544,8 @@ class OmniBrainDB:
             query += " AND pattern_type = ?"
             params.append(pattern_type)
 
-        query += f" AND timestamp >= datetime('now', '-{days} days')"
+        query += " AND timestamp >= ?"
+        params.append(cutoff)
         query += " ORDER BY timestamp DESC"
 
         with self._connect() as conn:
@@ -764,21 +827,28 @@ class OmniBrainDB:
     def prune_old_data(self, event_days: int = 365, proposal_days: int = 90, session_days: int = 30) -> dict[str, int]:
         """Prune old data according to retention policy. Returns counts deleted."""
         deleted = {}
+        event_cutoff = (datetime.now() - timedelta(days=event_days)).isoformat()
+        proposal_cutoff = (datetime.now() - timedelta(days=proposal_days)).isoformat()
+        session_cutoff = (datetime.now() - timedelta(days=session_days)).isoformat()
+
         with self._connect() as conn:
             cursor = conn.execute(
-                f"DELETE FROM events WHERE timestamp < datetime('now', '-{event_days} days')"
+                "DELETE FROM events WHERE timestamp < ?",
+                (event_cutoff,),
             )
             deleted["events"] = cursor.rowcount
 
             cursor = conn.execute(
-                f"""DELETE FROM proposals WHERE status IN ('executed', 'rejected', 'expired')
-                    AND created_at < datetime('now', '-{proposal_days} days')"""
+                """DELETE FROM proposals WHERE status IN ('executed', 'rejected', 'expired')
+                    AND created_at < ?""",
+                (proposal_cutoff,),
             )
             deleted["proposals"] = cursor.rowcount
 
             cursor = conn.execute(
-                f"""DELETE FROM agent_sessions WHERE status = 'completed'
-                    AND created_at < datetime('now', '-{session_days} days')"""
+                """DELETE FROM agent_sessions WHERE status = 'completed'
+                    AND created_at < ?""",
+                (session_cutoff,),
             )
             deleted["sessions"] = cursor.rowcount
 

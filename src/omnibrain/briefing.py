@@ -20,9 +20,10 @@ This can be called:
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from omnibrain.models import Briefing, BriefingType
@@ -476,8 +477,9 @@ class BriefingGenerator:
             stats = self._db.get_stats()
             section.total = stats.get("events_email", 0)
 
-            # Query today's emails from events table
-            events = self._db.get_events(source="gmail", limit=50)
+            # Query last 24h emails from events table
+            since_24h = datetime.now() - timedelta(hours=24)
+            events = self._db.get_events(source="gmail", since=since_24h, limit=50)
 
             if events:
                 section.total = len(events)
@@ -518,11 +520,20 @@ class BriefingGenerator:
         section = CalendarSection()
 
         try:
-            # Google Calendar events
-            events = self._db.get_events(source="calendar", limit=30)
+            # Filter to today's events only
+            now = datetime.now()
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            today_end = now.replace(hour=23, minute=59, second=59, microsecond=0)
 
-            # Also include chat-extracted events (commitments, meetings, etc.)
-            chat_events = self._db.get_events(source="chat", limit=20)
+            # Google Calendar events — today only
+            events = self._db.get_events(
+                source="calendar", since=today_start, until=today_end, limit=30,
+            )
+
+            # Also include chat-extracted events (commitments, meetings, etc.) — today only
+            chat_events = self._db.get_events(
+                source="chat", since=today_start, until=today_end, limit=20,
+            )
             if chat_events:
                 events = (events or []) + chat_events
 
@@ -724,7 +735,6 @@ def _meta_str(event: dict, key: str) -> str:
     """Get a string from event metadata."""
     meta = event.get("metadata")
     if isinstance(meta, str):
-        import json
         try:
             meta = json.loads(meta)
         except (ValueError, TypeError):
@@ -751,7 +761,6 @@ def _meta_flag(event: dict, key: str) -> bool:
 
 def _meta_list(event: dict, key: str) -> list[str]:
     """Get a list from event metadata."""
-    import json
     val = _meta_str(event, key)
     if not val:
         return []

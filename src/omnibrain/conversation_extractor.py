@@ -154,6 +154,7 @@ async def extract_and_persist(
             desc = ev.get("description", "")
 
             timestamp = f"{date}T{time_str}:00" if time_str else f"{date}T00:00:00"
+            all_day = not bool(time_str)
 
             metadata = {
                 "type": ev_type,
@@ -161,6 +162,7 @@ async def extract_and_persist(
                 "start_time": timestamp,
                 "extracted_from": "chat",
                 "session_id": session_id,
+                "all_day": all_day,
             }
 
             try:
@@ -227,11 +229,11 @@ async def extract_and_persist(
                     title=title,
                     description=f"Extracted from your conversation. Deadline: {deadline or 'none'}.",
                     priority=priority,
-                    action_data=json.dumps({
+                    action_data={
                         "source": "chat_extraction",
                         "session_id": session_id,
                         "deadline": deadline,
-                    }),
+                    },
                 )
             except Exception as e:
                 logger.warning("Failed to insert action item: %s", e)

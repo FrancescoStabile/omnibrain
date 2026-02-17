@@ -1398,19 +1398,19 @@ class OmniBrainAPIServer:
             """Query the knowledge graph with natural language."""
             kg = getattr(self, "_knowledge_graph", None)
             if not kg:
-                return {"answer": "", "sources": [], "error": "Knowledge graph not available"}
+                return {"summary": "", "references": [], "error": "Knowledge graph not available"}
             if not q.strip():
-                return {"answer": "", "sources": [], "error": "Empty query"}
+                return {"summary": "", "references": [], "error": "Empty query"}
             try:
                 result = kg.query(q.strip())
                 return {
-                    "answer": result.answer,
-                    "confidence": result.confidence,
-                    "sources": [s.to_dict() for s in result.sources[:10]],
+                    "summary": result.summary,
+                    "references": [s.to_dict() for s in result.references[:10]],
+                    "source_count": result.source_count,
                 }
             except Exception as e:
                 logger.warning("Knowledge query failed: %s", e)
-                return {"answer": "", "sources": [], "error": str(e)}
+                return {"summary": "", "references": [], "error": str(e)}
 
         @app.get("/api/v1/knowledge/contact/{identifier}")
         async def knowledge_contact(

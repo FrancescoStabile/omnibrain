@@ -260,6 +260,7 @@ class SkillRuntime:
         approval_gate: Any = None,
         config: Any = None,
         event_bus: EventBus | None = None,
+        llm_router: Any = None,
     ) -> None:
         self._db = db
         self._memory = memory
@@ -267,6 +268,7 @@ class SkillRuntime:
         self._approval = approval_gate
         self._config = config
         self._event_bus = event_bus or EventBus()
+        self._llm_router = llm_router
 
         self._skills: dict[str, SkillManifest] = {}  # name → manifest
         self._handlers_cache: dict[str, Any] = {}  # "name:handler_key" → fn
@@ -315,6 +317,18 @@ class SkillRuntime:
         """All registered Skills keyed by name."""
         return dict(self._skills)
 
+    def set_skill_enabled(self, name: str, enabled: bool) -> bool:
+        """Enable or disable a skill by name. Returns True if found."""
+        manifest = self._skills.get(name)
+        if manifest is None:
+            return False
+        manifest.enabled = enabled
+        return True
+
+    def has_skill(self, name: str) -> bool:
+        """Check if a skill is registered."""
+        return name in self._skills
+
     @property
     def event_bus(self) -> EventBus:
         return self._event_bus
@@ -334,6 +348,7 @@ class SkillRuntime:
             approval_gate=self._approval,
             config=self._config,
             event_bus=self._event_bus,
+            llm_router=self._llm_router,
         )
 
     # ──────────────────────────────────────────────────────────

@@ -71,6 +71,7 @@ class SkillContext:
         approval_gate: Any = None,
         config: Any = None,
         event_bus: Any = None,
+        llm_router: Any = None,
     ) -> None:
         self.skill_name = skill_name
         self.permissions = frozenset(permissions)
@@ -78,6 +79,7 @@ class SkillContext:
         # Core service references (injected by SkillRuntime)
         self._db = db
         self._memory = memory
+        self._llm_router = llm_router
         self._kg = knowledge_graph
         self._approval = approval_gate
         self._config = config
@@ -267,9 +269,25 @@ class SkillContext:
         ``"quick"`` → DeepSeek, ``"reasoning"`` → Claude, etc.
         """
         self._require("llm_access")
-        # Defer to router when wired; placeholder returns empty for now
         logger.info(f"[{self.skill_name}] llm_complete(task={task_type}, len={len(prompt)})")
-        return ""
+        if not self._llm_router:
+            logger.warning(f"[{self.skill_name}] llm_complete: no router available")
+            return ""
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            full = ""
+            async for chunk in self._llm_router.stream(
+                messages=messages,
+                system=f"You are helping the '{self.skill_name}' skill. Be concise and factual.",
+            ):
+                if chunk.content:
+                    full += chunk.content
+                if chunk.done:
+                    break
+            return full
+        except Exception as e:
+            logger.error(f"[{self.skill_name}] llm_complete failed: {e}")
+            return ""
 
     async def llm_stream(
         self,
@@ -278,8 +296,23 @@ class SkillContext:
     ) -> AsyncIterator[str]:
         """Streaming LLM completion (async generator)."""
         self._require("llm_access")
-        # Placeholder — will wire to router
-        yield ""
+        if not self._llm_router:
+            logger.warning(f"[{self.skill_name}] llm_stream: no router available")
+            yield ""
+            return
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            async for chunk in self._llm_router.stream(
+                messages=messages,
+                system=f"You are helping the '{self.skill_name}' skill. Be concise and factual.",
+            ):
+                if chunk.content:
+                    yield chunk.content
+                if chunk.done:
+                    break
+        except Exception as e:
+            logger.error(f"[{self.skill_name}] llm_stream failed: {e}")
+            yield ""
 
     # ──────────────────────────────────────────────────────────
     # User properties  (read_profile)

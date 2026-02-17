@@ -60,6 +60,8 @@ from urllib.parse import urlencode
 
 from omnibrain.db import OmniBrainDB
 from omnibrain.memory import MemoryManager
+from omnibrain.skill_context import EventBus
+from omnibrain.skill_runtime import SkillRuntime
 
 from omnigent.router import LLMRouter, Provider, StreamChunk
 
@@ -700,6 +702,14 @@ class OmniBrainAPIServer:
                 ))
             return SkillsListResponse(skills=skills)
 
+        @app.get("/api/v1/skills/runtime")
+        async def get_skills_runtime(token: str = Depends(verify_api_key)) -> dict[str, Any]:
+            """Return live SkillRuntime status (loaded skills, triggers, running state)."""
+            runtime = getattr(self, "_skill_runtime", None)
+            if not runtime:
+                return {"running": False, "skill_count": 0, "skills": {}}
+            return runtime.get_status()
+
         @app.post("/api/v1/skills/{skill_name}/install", response_model=SkillActionResponse)
         async def install_skill(
             skill_name: str,
@@ -715,6 +725,16 @@ class OmniBrainAPIServer:
                 category=b.category,
                 permissions=b.permissions,
             )
+            # Also activate in SkillRuntime if skill directory exists
+            runtime = getattr(self, "_skill_runtime", None)
+            if runtime and not runtime.has_skill(skill_name):
+                project_root = Path(__file__).resolve().parent.parent.parent
+                data_dir = getattr(self, "_data_dir", Path.home() / ".omnibrain")
+                for skill_dir in [project_root / "skills", data_dir / "skills"]:
+                    candidate = skill_dir / skill_name
+                    if (candidate / "skill.yaml").is_file():
+                        runtime.discover([skill_dir])
+                        break
             return SkillActionResponse(status="installed")
 
         @app.delete("/api/v1/skills/{skill_name}", response_model=SkillActionResponse)
@@ -724,6 +744,10 @@ class OmniBrainAPIServer:
             ok = self._db.remove_skill(skill_name)
             if not ok:
                 raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+            # Disable in runtime so it stops triggering
+            runtime = getattr(self, "_skill_runtime", None)
+            if runtime:
+                runtime.set_skill_enabled(skill_name, False)
             return SkillActionResponse(status="removed")
 
         @app.post("/api/v1/skills/{skill_name}/enable", response_model=SkillActionResponse)
@@ -733,6 +757,10 @@ class OmniBrainAPIServer:
             ok = self._db.set_skill_enabled(skill_name, True)
             if not ok:
                 raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+            # Sync to runtime
+            runtime = getattr(self, "_skill_runtime", None)
+            if runtime:
+                runtime.set_skill_enabled(skill_name, True)
             return SkillActionResponse(status="enabled")
 
         @app.post("/api/v1/skills/{skill_name}/disable", response_model=SkillActionResponse)
@@ -742,6 +770,10 @@ class OmniBrainAPIServer:
             ok = self._db.set_skill_enabled(skill_name, False)
             if not ok:
                 raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+            # Sync to runtime
+            runtime = getattr(self, "_skill_runtime", None)
+            if runtime:
+                runtime.set_skill_enabled(skill_name, False)
             return SkillActionResponse(status="disabled")
 
         # ══════════════════════════════════════════════════════════════════
@@ -846,6 +878,30 @@ class OmniBrainAPIServer:
                     system += f"\n\nThe user's name is {user_name}."
                 if memory_context:
                     system += memory_context
+
+                # ── 3b. Query Skills via match_ask ──
+                skill_context = ""
+                runtime = getattr(self, "_skill_runtime", None)
+                if runtime and body.message.strip():
+                    try:
+                        skill_results = await runtime.match_ask(body.message)
+                        if skill_results:
+                            parts = []
+                            for sr in skill_results:
+                                skill_name = sr.get("skill", "unknown")
+                                result = sr.get("result")
+                                if result:
+                                    parts.append(f"[Skill: {skill_name}]\n{result}")
+                            if parts:
+                                skill_context = (
+                                    "\n\n---\n**Active Skills provided this information:**\n"
+                                    + "\n\n".join(parts)
+                                )
+                    except Exception as e:
+                        logger.warning(f"Skill match_ask failed: {e}")
+
+                if skill_context:
+                    system += skill_context
 
                 # ── 4. Build messages with conversation history ──
                 messages: list[dict[str, str]] = []
@@ -1267,6 +1323,41 @@ def create_api_server(
     except Exception as e:
         logger.warning(f"Failed to create ProactiveEngine: {e}")
 
+    # ── Wire SkillRuntime + EventBus ──
+    event_bus = EventBus()
+    skill_runtime: SkillRuntime | None = None
+    try:
+        skill_runtime = SkillRuntime(
+            db=db,
+            memory=memory,
+            knowledge_graph=None,
+            approval_gate=None,
+            config=config,
+            event_bus=event_bus,
+            llm_router=router,
+        )
+        project_root = Path(__file__).resolve().parent.parent.parent
+        skill_dirs = [project_root / "skills", actual_dir / "skills"]
+        discovered = skill_runtime.discover(skill_dirs)
+
+        # Auto-register discovered skills in DB so they appear in the UI
+        for manifest in discovered:
+            existing = db.get_installed_skill(manifest.name)
+            if not existing:
+                db.install_skill(
+                    name=manifest.name,
+                    version=manifest.version,
+                    description=manifest.description,
+                    author=manifest.author,
+                    category=manifest.category,
+                    permissions=manifest.permissions,
+                )
+                logger.info(f"Auto-registered skill '{manifest.name}' in DB")
+
+        logger.info(f"SkillRuntime wired — {len(discovered)} skills discovered")
+    except Exception as e:
+        logger.warning(f"Failed to create SkillRuntime: {e}")
+
     server = OmniBrainAPIServer(
         db=db,
         memory_manager=memory,
@@ -1281,6 +1372,15 @@ def create_api_server(
     # Store references on server for access in endpoints
     server._engine = engine  # type: ignore[attr-defined]
     server._pattern_detector = pattern_detector  # type: ignore[attr-defined]
+    server._skill_runtime = skill_runtime  # type: ignore[attr-defined]
+    server._event_bus = event_bus  # type: ignore[attr-defined]
+
+    # ── Wire EventBus "notification" → WebSocket broadcast ──
+    async def _event_bus_to_ws(event_type: str, data: dict[str, Any]) -> None:
+        """Bridge EventBus notifications → WebSocket broadcast."""
+        await server.broadcast("notification", data)
+
+    event_bus.subscribe("notification", _event_bus_to_ws)
 
     # ── Wire ProactiveEngine notify → WebSocket broadcast ──
     if engine:
@@ -1314,5 +1414,17 @@ def create_api_server(
         async def _stop_proactive_engine() -> None:
             await engine.stop()
             logger.info("ProactiveEngine stopped")
+
+    # ── Start SkillRuntime as background task ──
+    if skill_runtime:
+        @server.app.on_event("startup")
+        async def _start_skill_runtime() -> None:
+            asyncio.create_task(skill_runtime.run())  # type: ignore[union-attr]
+            logger.info("SkillRuntime started as background task")
+
+        @server.app.on_event("shutdown")
+        async def _stop_skill_runtime() -> None:
+            await skill_runtime.stop()  # type: ignore[union-attr]
+            logger.info("SkillRuntime stopped")
 
     return server

@@ -1,7 +1,8 @@
 /**
- * WebSocket hook — real-time feed from ProactiveEngine.
+ * WebSocket hook — real-time feed from ProactiveEngine + EventBus.
  *
  * Connects to /api/v1/feed and dispatches notifications to Zustand store.
+ * Also fires toast notifications for important/critical events.
  * Auto-reconnects with exponential backoff.
  */
 
@@ -14,6 +15,13 @@ const WS_PATH = "/api/v1/feed";
 const PING_INTERVAL_MS = 25_000;
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
+
+/** Optional toast function injected from AppShell context */
+let _toastFn: ((level: string, message: string) => void) | null = null;
+
+export function setWebSocketToastFn(fn: ((level: string, message: string) => void) | null) {
+  _toastFn = fn;
+}
 
 export function useWebSocket() {
   const addNotification = useStore((s) => s.addNotification);
@@ -55,6 +63,19 @@ export function useWebSocket() {
               message: data.message || "",
               timestamp: data.timestamp || new Date().toISOString(),
             });
+
+            // Fire toast for important+ notifications
+            if (_toastFn && (data.level === "important" || data.level === "critical" || data.level === "fyi")) {
+              _toastFn(data.level, data.message || data.title || "New notification");
+            }
+
+            // Browser notification for critical events
+            if (data.level === "critical" && typeof Notification !== "undefined" && Notification.permission === "granted") {
+              new Notification(data.title || "OmniBrain", {
+                body: data.message || "",
+                icon: "/favicon.ico",
+              });
+            }
           }
         } catch {
           // Ignore malformed messages

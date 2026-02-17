@@ -186,6 +186,11 @@ function StatsRow({ stats }: { stats: Record<string, number> }) {
 export function HomePage() {
   const { proposals, setProposals, status, setStatus, briefingData, setBriefingData, setView } = useStore();
   const [loading, setLoading] = useState(true);
+  const [userName, setUserName] = useState("");
+
+  useEffect(() => {
+    api.getSettings().then((s) => setUserName(s.profile.name)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -217,7 +222,7 @@ export function HomePage() {
       {/* ── Greeting ── */}
       <header className="space-y-1">
         <h1 className="text-[32px] font-bold text-[var(--text-primary)]">
-          {briefingData?.greeting || `${greeting()}, Francesco.`}
+          {briefingData?.greeting || `${greeting()}${userName ? `, ${userName}` : ""}.`}
         </h1>
         <p className="text-sm text-[var(--text-tertiary)]">{todayFormatted()}</p>
       </header>

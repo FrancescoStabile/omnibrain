@@ -291,6 +291,9 @@ export const api = {
   disableSkill: (name: string) =>
     request<{ ok: boolean }>(`/skills/${name}/disable`, { method: "POST" }),
 
+  getSkillRuntime: () =>
+    request<{ skills: Record<string, { enabled: boolean; loaded: boolean }> }>("/skills/runtime"),
+
   // ── Settings ──
   getSettings: () => request<Settings>("/settings"),
 

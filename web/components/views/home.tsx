@@ -19,6 +19,8 @@ import {
   Timer,
   MessageCircle,
   Puzzle,
+  Users,
+  ClipboardCheck,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useNavigate } from "@/hooks/useNavigate";
@@ -92,6 +94,16 @@ function InsightCard({ proposal, index }: { proposal: Proposal; index: number })
     }
   };
 
+  const handleSnooze = async (hours = 4) => {
+    setActing(true);
+    try {
+      await api.snoozeProposal(proposal.id, hours);
+      exitThenRemove(proposal.id);
+    } catch {
+      setActing(false);
+    }
+  };
+
   return (
     <div
       ref={cardRef}
@@ -127,7 +139,7 @@ function InsightCard({ proposal, index }: { proposal: Proposal; index: number })
           <X className="h-3.5 w-3.5" />
           Dismiss
         </Button>
-        <Button variant="ghost" size="sm" disabled={acting} aria-label={`Snooze: ${proposal.title}`}>
+        <Button variant="ghost" size="sm" onClick={() => handleSnooze(4)} disabled={acting} aria-label={`Snooze: ${proposal.title}`}>
           <Timer className="h-3.5 w-3.5" />
           Snooze
         </Button>
@@ -151,10 +163,10 @@ function InsightCard({ proposal, index }: { proposal: Proposal; index: number })
 
 function StatsRow({ stats }: { stats: Record<string, number> }) {
   const items = [
-    { label: "Events", value: stats.events ?? 0, icon: Zap },
-    { label: "Contacts", value: stats.contacts ?? 0, icon: Mail },
-    { label: "Proposals", value: stats.proposals_pending ?? 0, icon: Clock },
-    { label: "Skills", value: stats.installed_skills ?? 0, icon: TrendingUp },
+    { label: "Events", value: stats.events ?? 0, icon: Calendar },
+    { label: "Contacts", value: stats.contacts ?? 0, icon: Users },
+    { label: "Proposals", value: stats.proposals_pending ?? 0, icon: ClipboardCheck },
+    { label: "Skills", value: stats.installed_skills ?? 0, icon: Puzzle },
   ];
 
   return (
@@ -264,10 +276,7 @@ export function HomePage() {
                   {briefingData.proposals.total_pending} pending
                 </span>
               )}
-              {briefingData.memory_highlights.length > 0 &&
-                !briefingData.emails.unread &&
-                !briefingData.calendar.total_events &&
-                !briefingData.proposals.total_pending && (
+              {briefingData.memory_highlights.length > 0 && (
                 <span className="text-[var(--text-tertiary)]">
                   {briefingData.memory_highlights.length} memory note{briefingData.memory_highlights.length !== 1 ? "s" : ""}
                 </span>

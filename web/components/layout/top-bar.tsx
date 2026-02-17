@@ -12,9 +12,11 @@ import { Button } from "@/components/ui/button";
 import { MobileMenuButton } from "./sidebar";
 import { NotificationPanel } from "./notification-panel";
 import { cn } from "@/lib/utils";
+import { useNavigate } from "@/hooks/useNavigate";
 
 export function TopBar() {
   const { theme, toggleTheme, notifications, googleConnected, setGoogleConnected } = useStore();
+  const navigate = useNavigate();
   const [notifOpen, setNotifOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [userName, setUserName] = useState("");
@@ -113,7 +115,7 @@ export function TopBar() {
               )}
               <div className="py-1">
                 <button
-                  onClick={() => { useStore.getState().setView("settings"); setUserMenuOpen(false); }}
+                  onClick={() => { navigate("settings"); setUserMenuOpen(false); }}
                   className="flex items-center gap-2 w-full px-4 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] transition-colors"
                 >
                   <User className="h-4 w-4" />

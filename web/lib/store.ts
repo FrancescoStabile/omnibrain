@@ -136,6 +136,15 @@ function applyTheme(theme: Theme) {
   }
 }
 
+function getInitialSidebarOpen(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const stored = localStorage.getItem("omnibrain-sidebar-open");
+    if (stored !== null) return stored === "true";
+  } catch { /* SSR */ }
+  return window.innerWidth >= 640;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Store
 // ═══════════════════════════════════════════════════════════════════════════
@@ -204,8 +213,15 @@ export const useStore = create<AppState>((set) => ({
   setStatus: (status) => set({ status }),
 
   // Sidebar
-  sidebarOpen: true,
-  setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
+  sidebarOpen: getInitialSidebarOpen(),
+  setSidebarOpen: (sidebarOpen) => {
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("omnibrain-sidebar-open", String(sidebarOpen));
+      }
+    } catch { /* quota */ }
+    set({ sidebarOpen });
+  },
 
   // Briefing
   briefingData: null,

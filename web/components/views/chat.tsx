@@ -6,14 +6,15 @@
 
 "use client";
 
-import { useRef, useState, useEffect, useMemo, type FormEvent } from "react";
-import { Send, Sparkles, Brain, Copy } from "lucide-react";
+import { useRef, useState, useEffect, useMemo, useCallback, type FormEvent, type KeyboardEvent } from "react";
+import { Send, Sparkles, Brain, Copy, RotateCcw, AlertCircle } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useStore } from "@/lib/store";
-import { streamChat, type ChatMessage } from "@/lib/api";
+import { useStore, type View } from "@/lib/store";
+import { streamChat, api, type ChatMessage, type ChatAction } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useNavigate } from "@/hooks/useNavigate";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Suggested Prompts (empty state) — contextual if onboarding result exists
@@ -68,7 +69,7 @@ function buildSuggestions(onboardingResult: ReturnType<typeof useStore.getState>
 // Chat Bubble
 // ═══════════════════════════════════════════════════════════════════════════
 
-function ChatBubble({ message }: { message: ChatMessage }) {
+function ChatBubble({ message, onAction }: { message: ChatMessage; onAction: (action: ChatAction) => void }) {
   const isUser = message.role === "user";
 
   return (
@@ -101,7 +102,7 @@ function ChatBubble({ message }: { message: ChatMessage }) {
         {message.actions && message.actions.length > 0 && (
           <div className="flex gap-2 mt-3 pt-2 border-t border-white/10">
             {message.actions.map((action, i) => (
-              <Button key={i} variant="ghost" size="sm" className="text-xs">
+              <Button key={i} variant="ghost" size="sm" className="text-xs" onClick={() => onAction(action)}>
                 {action.title}
               </Button>
             ))}
@@ -156,9 +157,19 @@ export function ChatPage() {
   } = useStore();
   const [input, setInput] = useState("");
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [failedMessage, setFailedMessage] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const navigate = useNavigate();
   const suggestions = useMemo(() => buildSuggestions(onboardingResult), [onboardingResult]);
+
+  // Auto-resize textarea
+  const resizeTextarea = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 200) + "px";
+  }, []);
 
   // Load chat history from backend on mount (session persistence)
   useEffect(() => {
@@ -208,7 +219,10 @@ export function ChatPage() {
     };
     addMessage(userMsg);
     setInput("");
+    setFailedMessage(null);
     setChatLoading(true);
+    // Reset textarea height
+    if (inputRef.current) inputRef.current.style.height = "auto";
 
     // Add an empty assistant message to fill via streaming
     addMessage({
@@ -218,6 +232,9 @@ export function ChatPage() {
     });
 
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 120_000);
+
       for await (const event of streamChat(text.trim(), chatSessionId)) {
         if (event.type === "token" && event.content) {
           appendToLastAssistant(event.content);
@@ -230,17 +247,70 @@ export function ChatPage() {
           break;
         }
       }
+      clearTimeout(timeout);
     } catch {
-      // Replace the empty assistant message with an error
-      appendToLastAssistant("Something went wrong. Please try again.");
+      // Replace partial content with error message
+      setFailedMessage(text.trim());
+      setMessages(
+        useStore.getState().messages.map((m, i, arr) =>
+          i === arr.length - 1 && m.role === "assistant"
+            ? { ...m, content: "⚠️ Something went wrong. Please try again." }
+            : m
+        )
+      );
     } finally {
       setChatLoading(false);
     }
   };
 
+  const handleRetry = () => {
+    if (failedMessage) {
+      // Remove the error message
+      setMessages(useStore.getState().messages.slice(0, -2));
+      send(failedMessage);
+    }
+  };
+
+  const handleAction = useCallback(
+    (action: ChatAction) => {
+      switch (action.type) {
+        case "navigate":
+          if (action.data?.view) {
+            navigate(action.data.view as View);
+          }
+          break;
+        case "approve":
+          if (action.data?.id) {
+            api.approveProposal(Number(action.data.id));
+          }
+          break;
+        case "draft":
+          if (action.data?.prompt) {
+            send(String(action.data.prompt));
+          }
+          break;
+        case "link":
+          if (action.data?.url) {
+            window.open(String(action.data.url), "_blank", "noopener");
+          }
+          break;
+        default:
+          break;
+      }
+    },
+    [navigate, chatSessionId],
+  );
+
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     send(input);
+  };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send(input);
+    }
   };
 
   const isEmpty = messages.length === 0;
@@ -279,8 +349,21 @@ export function ChatPage() {
         ) : (
           <div role="log" aria-live="polite" aria-label="Chat messages" className="max-w-3xl mx-auto space-y-4">
             {messages.map((msg, i) => (
-              <ChatBubble key={i} message={msg} />
+              <ChatBubble key={i} message={msg} onAction={handleAction} />
             ))}
+            {failedMessage && !chatLoading && (
+              <div className="flex justify-start">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs text-[var(--accent-red)] gap-1"
+                  onClick={handleRetry}
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Retry
+                </Button>
+              </div>
+            )}
             {chatLoading && <TypingIndicator />}
           </div>
         )}
@@ -292,13 +375,18 @@ export function ChatPage() {
           onSubmit={handleSubmit}
           className="max-w-3xl mx-auto flex items-center gap-3"
         >
-          <input
+          <textarea
             ref={inputRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              resizeTextarea();
+            }}
+            onKeyDown={handleKeyDown}
             placeholder="Ask me anything..."
+            rows={1}
             className={cn(
-              "flex-1 h-11 px-4 rounded-[var(--radius-lg)]",
+              "flex-1 min-h-[44px] max-h-[200px] px-4 py-2.5 rounded-[var(--radius-lg)] resize-none",
               "bg-[var(--bg-secondary)] border border-[var(--border-default)]",
               "text-sm text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)]",
               "focus:border-[var(--brand-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--brand-primary)]",

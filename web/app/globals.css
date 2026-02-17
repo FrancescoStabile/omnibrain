@@ -8,9 +8,10 @@
 
 @theme {
   /* ── Fonts ── */
-  --font-sans: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
-    sans-serif;
-  --font-mono: "Geist Mono", "JetBrains Mono", "Fira Code", monospace;
+  --font-sans: var(--font-geist-sans, "Geist"), "Inter", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono, "Geist Mono"), "JetBrains Mono",
+    "Fira Code", monospace;
 
   /* ── Animation ── */
   --animate-skeleton: skeleton-pulse 1.5s ease-in-out infinite;

@@ -191,6 +191,11 @@ function ProposalsSection({
     removeProposal(id);
   };
 
+  const handleSnooze = async (id: number, hours = 4) => {
+    await api.snoozeProposal(id, hours);
+    removeProposal(id);
+  };
+
   return (
     <section className="space-y-3" aria-label="Pending proposals">
       <div className="flex items-center gap-2">
@@ -233,7 +238,7 @@ function ProposalsSection({
                 <X className="h-3.5 w-3.5" />
                 Dismiss
               </Button>
-              <Button variant="ghost" size="sm">
+              <Button variant="ghost" size="sm" onClick={() => handleSnooze(p.id)}>
                 <Timer className="h-3.5 w-3.5" />
                 Snooze
               </Button>
@@ -469,10 +474,9 @@ export function BriefingPage() {
           size="sm"
           onClick={loadBriefing}
           disabled={briefingLoading}
-          className={briefingLoading ? "animate-spin" : ""}
           aria-label="Refresh briefing"
         >
-          <RefreshCw className="h-4 w-4" />
+          <RefreshCw className={`h-4 w-4 ${briefingLoading ? "animate-spin" : ""}`} />
         </Button>
       </header>
 

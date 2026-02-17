@@ -316,6 +316,12 @@ export const api = {
       body: JSON.stringify({ reason }),
     }),
 
+  snoozeProposal: (id: number, hours = 4) =>
+    request<{ ok: boolean }>(`/proposals/${id}/snooze`, {
+      method: "POST",
+      body: JSON.stringify({ hours }),
+    }),
+
   // ── Memory / Search ──
   search: (q: string, limit = 10) =>
     request<SearchResponse>(`/search?q=${encodeURIComponent(q)}&limit=${limit}`),
@@ -407,40 +413,58 @@ export async function* streamChat(
   message: string,
   sessionId?: string,
 ): AsyncGenerator<{ type: string; content?: string; action?: ChatAction; session_id?: string }> {
-  const res = await fetch(`${BASE}/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, session_id: sessionId, stream: true }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120_000);
 
-  if (!res.ok) {
-    throw new ApiError(res.status, "STREAM_ERROR", "Chat stream failed");
-  }
+  try {
+    const res = await fetch(`${BASE}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, session_id: sessionId, stream: true }),
+      signal: controller.signal,
+    });
 
-  const reader = res.body?.getReader();
-  if (!reader) return;
+    if (!res.ok) {
+      throw new ApiError(res.status, "STREAM_ERROR", "Chat stream failed");
+    }
 
-  const decoder = new TextDecoder();
-  let buffer = "";
+    const reader = res.body?.getReader();
+    if (!reader) return;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+    const decoder = new TextDecoder();
+    let buffer = "";
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("data: ")) {
-        try {
-          const data = JSON.parse(trimmed.slice(6));
-          yield data;
-        } catch {
-          // Skip malformed lines
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("data: ")) {
+          try {
+            const data = JSON.parse(trimmed.slice(6));
+            yield data;
+          } catch {
+            // Skip malformed lines
+          }
         }
       }
     }
+
+    // Flush remaining buffer
+    if (buffer.trim().startsWith("data: ")) {
+      try {
+        const data = JSON.parse(buffer.trim().slice(6));
+        yield data;
+      } catch {
+        // Skip malformed tail
+      }
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 }

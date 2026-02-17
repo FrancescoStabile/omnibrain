@@ -1,4 +1,6 @@
 import type { Metadata, Viewport } from "next";
+import { GeistSans } from "geist/font/sans";
+import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://omnibrain.dev";
@@ -71,7 +73,14 @@ export default function RootLayout({
 
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning>
-      <body className="font-sans antialiased">
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('omnibrain-theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}})()`,
+          }}
+        />
+      </head>
+      <body className={`${GeistSans.variable} ${GeistMono.variable} font-sans antialiased`}>
         <AppShellWrapper>{children}</AppShellWrapper>
       </body>
     </html>

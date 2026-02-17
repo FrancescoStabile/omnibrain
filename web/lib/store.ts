@@ -69,6 +69,10 @@ interface AppState {
   sidebarOpen: boolean;
   setSidebarOpen: (v: boolean) => void;
 
+  // ── WebSocket status ──
+  wsStatus: "connected" | "reconnecting" | "disconnected";
+  setWsStatus: (s: "connected" | "reconnecting" | "disconnected") => void;
+
   // ── Briefing ──
   briefingData: BriefingData | null;
   setBriefingData: (d: BriefingData) => void;
@@ -222,6 +226,10 @@ export const useStore = create<AppState>((set) => ({
     } catch { /* quota */ }
     set({ sidebarOpen });
   },
+
+  // WebSocket status
+  wsStatus: "disconnected" as const,
+  setWsStatus: (wsStatus) => set({ wsStatus }),
 
   // Briefing
   briefingData: null,

@@ -113,7 +113,7 @@ export function NotificationPanel({
     <div
       ref={panelRef}
       className={cn(
-        "absolute right-0 top-full mt-2 w-[380px] max-h-[480px]",
+        "absolute right-0 top-full mt-2 w-[380px] max-w-[90vw] max-h-[480px]",
         "rounded-[var(--radius-lg)] border border-[var(--border-default)]",
         "bg-[var(--bg-elevated)] shadow-[var(--shadow-lg)]",
         "flex flex-col overflow-hidden",

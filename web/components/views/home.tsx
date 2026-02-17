@@ -59,6 +59,10 @@ function InsightCard({ proposal, index }: { proposal: Proposal; index: number })
   const [acting, setActing] = useState(false);
   const [exiting, setExiting] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
+  const hasAnimated = useRef(false);
+
+  // Only animate the spring-in on mount, not on subsequent re-renders
+  useEffect(() => { hasAnimated.current = true; }, []);
 
   const icon = proposal.type.includes("email") ? (
     <Mail className="h-4 w-4" />
@@ -74,11 +78,15 @@ function InsightCard({ proposal, index }: { proposal: Proposal; index: number })
     setTimeout(() => removeProposal(id), 200);
   };
 
+  const [approved, setApproved] = useState(false);
+  const [rejected, setRejected] = useState(false);
+
   const handleApprove = async () => {
     setActing(true);
     try {
       await api.approveProposal(proposal.id);
-      exitThenRemove(proposal.id);
+      setApproved(true);
+      setTimeout(() => exitThenRemove(proposal.id), 600);
     } catch {
       setActing(false);
     }
@@ -88,7 +96,8 @@ function InsightCard({ proposal, index }: { proposal: Proposal; index: number })
     setActing(true);
     try {
       await api.rejectProposal(proposal.id);
-      exitThenRemove(proposal.id);
+      setRejected(true);
+      setTimeout(() => exitThenRemove(proposal.id), 400);
     } catch {
       setActing(false);
     }
@@ -107,8 +116,8 @@ function InsightCard({ proposal, index }: { proposal: Proposal; index: number })
   return (
     <div
       ref={cardRef}
-      className={exiting ? "animate-slide-out-up" : "animate-spring-in"}
-      style={{ animationDelay: exiting ? "0ms" : `${index * 50}ms`, animationFillMode: "both" }}
+      className={exiting ? "animate-slide-out-up" : (hasAnimated.current ? undefined : "animate-spring-in")}
+      style={exiting ? { animationFillMode: "both" } : (hasAnimated.current ? undefined : { animationDelay: `${index * 50}ms`, animationFillMode: "both" })}
     >
       <Card
         variant={proposal.priority >= 3 ? "urgent" : "default"}
@@ -131,11 +140,25 @@ function InsightCard({ proposal, index }: { proposal: Proposal; index: number })
           onClick={handleApprove}
           disabled={acting}
           aria-label={`Approve: ${proposal.title}`}
+          className={approved ? "!bg-[var(--success)] transition-colors duration-300" : ""}
         >
-          <Check className="h-3.5 w-3.5" />
-          Approve
+          {approved ? (
+            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" style={{ strokeDasharray: 24, animation: "draw-check 400ms ease-out forwards" }} />
+            </svg>
+          ) : (
+            <Check className="h-3.5 w-3.5" />
+          )}
+          {approved ? "Approved" : "Approve"}
         </Button>
-        <Button variant="ghost" size="sm" onClick={handleReject} disabled={acting} aria-label={`Dismiss: ${proposal.title}`}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleReject}
+          disabled={acting}
+          aria-label={`Dismiss: ${proposal.title}`}
+          className={rejected ? "animate-[shake_300ms_ease-in-out] text-[var(--error)]" : ""}
+        >
           <X className="h-3.5 w-3.5" />
           Dismiss
         </Button>
@@ -162,6 +185,9 @@ function InsightCard({ proposal, index }: { proposal: Proposal; index: number })
 // ═══════════════════════════════════════════════════════════════════════════
 
 function StatsRow({ stats }: { stats: Record<string, number> }) {
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; }, []);
+
   const items = [
     { label: "Events", value: stats.events ?? 0, icon: Calendar },
     { label: "Contacts", value: stats.contacts ?? 0, icon: Users },
@@ -176,8 +202,8 @@ function StatsRow({ stats }: { stats: Record<string, number> }) {
         return (
           <Card key={item.label} className="p-4 !animate-none">
             <div
-              className="animate-spring-in"
-              style={{ animationDelay: `${i * 60}ms`, animationFillMode: "both" }}
+              className={mounted.current ? undefined : "animate-spring-in"}
+              style={mounted.current ? undefined : { animationDelay: `${i * 60}ms`, animationFillMode: "both" }}
             >
               <div className="flex items-center gap-2 mb-1">
                 <Icon className="h-4 w-4 text-[var(--text-tertiary)]" />
@@ -199,9 +225,17 @@ function StatsRow({ stats }: { stats: Record<string, number> }) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function HomePage() {
-  const { proposals, setProposals, status, setStatus, briefingData, setBriefingData } = useStore();
+  // Use individual selectors to prevent re-renders from unrelated store changes
+  const proposals = useStore((s) => s.proposals);
+  const setProposals = useStore((s) => s.setProposals);
+  const status = useStore((s) => s.status);
+  const setStatus = useStore((s) => s.setStatus);
+  const briefingData = useStore((s) => s.briefingData);
+  const setBriefingData = useStore((s) => s.setBriefingData);
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [userName, setUserName] = useState("");
 
   useEffect(() => {
@@ -222,6 +256,12 @@ export function HomePage() {
         if (statusRes.status === "fulfilled") setStatus(statusRes.value);
         if (proposalsRes.status === "fulfilled") setProposals(proposalsRes.value);
         if (briefingRes.status === "fulfilled") setBriefingData(briefingRes.value);
+        if (!cancelled) {
+          setLastUpdated(new Date());
+          setError(null);
+        }
+      } catch {
+        if (!cancelled) setError("Couldn't load your data. Check that the backend is running.");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -240,8 +280,27 @@ export function HomePage() {
         <h1 className="text-[32px] font-bold text-[var(--text-primary)]">
           {briefingData?.greeting || `${greeting()}${userName ? `, ${userName}` : ""}.`}
         </h1>
-        <p className="text-sm text-[var(--text-tertiary)]">{todayFormatted()}</p>
+        <p className="text-sm text-[var(--text-tertiary)]">
+          {todayFormatted()}
+          {lastUpdated && (
+            <span className="ml-2 text-[var(--text-tertiary)]">
+              · Updated {lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          )}
+        </p>
       </header>
+
+      {/* ── Error ── */}
+      {error && (
+        <Card>
+          <CardBody className="text-center py-8 space-y-3">
+            <p className="text-sm text-[var(--error)]">{error}</p>
+            <Button variant="primary" size="sm" onClick={() => { setLoading(true); setError(null); window.location.reload(); }}>
+              Try Again
+            </Button>
+          </CardBody>
+        </Card>
+      )}
 
       {/* ── Quick Briefing Summary ── */}
       {briefingData && (

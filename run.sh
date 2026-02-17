@@ -78,7 +78,7 @@ echo $! > "$PIDFILE_BACK"
 
 # Wait for backend to be ready
 for i in $(seq 1 30); do
-    if curl -sf "http://127.0.0.1:${BACKEND_PORT}/api/v1/status" > /dev/null 2>&1; then
+    if curl -sf "http://127.0.0.1:${BACKEND_PORT}/api/v1/health" > /dev/null 2>&1; then
         echo -e "${GREEN}✓ Backend ready${NC}"
         break
     fi
@@ -88,6 +88,12 @@ for i in $(seq 1 30); do
     fi
     sleep 0.5
 done
+
+# ── Read auth token for frontend ──
+AUTH_TOKEN_FILE="${HOME}/.omnibrain/auth_token"
+if [[ -f "$AUTH_TOKEN_FILE" ]]; then
+    export OMNIBRAIN_API_KEY="$(cat "$AUTH_TOKEN_FILE")"
+fi
 
 # ── Start Frontend ──
 echo -e "${CYAN}Starting frontend on port ${FRONTEND_PORT}...${NC}"

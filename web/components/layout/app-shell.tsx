@@ -25,6 +25,7 @@ import { ToastProvider, useToast } from "@/components/ui/toast";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { useWebSocket, setWebSocketToastFn } from "@/hooks/useWebSocket";
 import { useHotkeys, ShortcutsHelp } from "@/hooks/useHotkeys";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 const views: Record<string, React.FC> = {
   home: HomePage,
@@ -48,6 +49,7 @@ interface AppShellProps {
  */
 function ToastBridge() {
   const toast = useToast();
+  const online = useOnlineStatus();
 
   // Wire WebSocket notifications to toast
   useEffect(() => {
@@ -63,9 +65,10 @@ function ToastBridge() {
     return () => setWebSocketToastFn(null);
   }, [toast]);
 
-  // Wire global API errors to toast
+  // Wire global API errors to toast — suppress when offline
   useEffect(() => {
     setApiErrorHandler((err: ApiError) => {
+      if (!navigator.onLine) return; // Suppress individual errors when offline
       if (err.status === 0) {
         toast.error(err.message || "Network error — is the backend running?", 6000);
       } else if (err.status >= 500) {
@@ -77,6 +80,22 @@ function ToastBridge() {
     });
     return () => setApiErrorHandler(null);
   }, [toast]);
+
+  // Auto-refresh data when coming back online
+  useEffect(() => {
+    if (online) {
+      // Small delay to let network stabilize
+      const t = setTimeout(() => {
+        const { setBriefingData, setBriefingLoading, setProposals, setStatus } = useStore.getState();
+        Promise.allSettled([
+          api.getBriefingData().then(setBriefingData),
+          api.getProposals().then(setProposals),
+          api.getStatus().then(setStatus),
+        ]).catch(() => {});
+      }, 1000);
+      return () => clearTimeout(t);
+    }
+  }, [online]);
 
   // Request browser notification permission (once)
   useEffect(() => {
@@ -149,10 +168,39 @@ export function AppShell({ children }: AppShellProps) {
   }, [setView, setOnboardingComplete, setGoogleConnected, setOnboardingStep]);
 
   if (!ready) {
-    // Brief loading — prevents flash of wrong view
+    // Skeleton loading — matches shell layout for seamless transition
     return (
-      <div className="flex h-screen items-center justify-center bg-[var(--bg-primary)]">
-        <div className="w-8 h-8 rounded-full border-2 border-[var(--brand-primary)] border-t-transparent animate-spin" />
+      <div className="flex h-screen bg-[var(--bg-primary)]">
+        {/* Sidebar skeleton */}
+        <div className="hidden md:flex w-[220px] flex-col border-r border-[var(--border-subtle)] bg-[var(--bg-secondary)] p-4 gap-4">
+          <div className="h-8 w-24 rounded-[var(--radius-md)] bg-[var(--bg-tertiary)] animate-skeleton" />
+          <div className="space-y-2 mt-4">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-8 rounded-[var(--radius-md)] bg-[var(--bg-tertiary)] animate-skeleton" style={{ animationDelay: `${i * 100}ms` }} />
+            ))}
+          </div>
+        </div>
+        {/* Main content skeleton */}
+        <div className="flex-1 flex flex-col">
+          {/* TopBar skeleton */}
+          <div className="h-14 border-b border-[var(--border-subtle)] flex items-center px-6">
+            <div className="h-5 w-32 rounded bg-[var(--bg-tertiary)] animate-skeleton" />
+            <div className="ml-auto flex gap-3">
+              <div className="h-8 w-8 rounded-full bg-[var(--bg-tertiary)] animate-skeleton" />
+              <div className="h-8 w-8 rounded-full bg-[var(--bg-tertiary)] animate-skeleton" />
+            </div>
+          </div>
+          {/* Content skeleton */}
+          <div className="flex-1 p-6 max-w-3xl mx-auto w-full space-y-4">
+            <div className="h-10 w-64 rounded-[var(--radius-md)] bg-[var(--bg-tertiary)] animate-skeleton" />
+            <div className="h-5 w-40 rounded bg-[var(--bg-tertiary)] animate-skeleton" />
+            <div className="mt-6 space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="h-24 rounded-[var(--radius-lg)] bg-[var(--bg-tertiary)] animate-skeleton" style={{ animationDelay: `${i * 150}ms` }} />
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     );
   }

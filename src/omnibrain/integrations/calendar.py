@@ -23,9 +23,10 @@ from omnibrain.models import CalendarEvent
 
 logger = logging.getLogger("omnibrain.integrations.calendar")
 
-# Calendar API scopes — Phase 1 read-only
+# Calendar API scopes — full read/write access
 CALENDAR_SCOPES = [
-    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/calendar.readonly",  # kept for backward compat with existing tokens
 ]
 
 
@@ -214,6 +215,129 @@ class CalendarClient:
         except Exception as e:
             logger.error(f"Calendar search failed for '{query}': {e}")
             raise
+
+    # ── Write Operations ──
+
+    def create_event(
+        self,
+        title: str,
+        start_time: datetime,
+        end_time: datetime | None = None,
+        description: str = "",
+        location: str = "",
+        attendees: list[str] | None = None,
+    ) -> CalendarEvent | None:
+        """Create a new event on Google Calendar.
+
+        Args:
+            title: Event title/summary.
+            start_time: When the event starts.
+            end_time: When the event ends (defaults to start_time + 1 hour).
+            description: Event description.
+            location: Event location.
+            attendees: List of attendee email addresses.
+
+        Returns:
+            The created CalendarEvent, or None on failure.
+        """
+        if not self.is_authenticated:
+            raise CalendarAuthError("Not authenticated.")
+
+        if end_time is None:
+            end_time = start_time + timedelta(hours=1)
+
+        body: dict[str, Any] = {
+            "summary": title,
+            "start": {"dateTime": start_time.isoformat(), "timeZone": "UTC"},
+            "end": {"dateTime": end_time.isoformat(), "timeZone": "UTC"},
+        }
+        if description:
+            body["description"] = description
+        if location:
+            body["location"] = location
+        if attendees:
+            body["attendees"] = [{"email": a} for a in attendees]
+
+        try:
+            result = self._service.events().insert(
+                calendarId="primary", body=body,
+            ).execute()
+            event = _parse_event(result)
+            if event:
+                logger.info(f"Created Google Calendar event: {title} ({event.id})")
+            return event
+        except Exception as e:
+            logger.error(f"Failed to create calendar event '{title}': {e}")
+            return None
+
+    def delete_event(self, event_id: str) -> bool:
+        """Delete an event from Google Calendar.
+
+        Args:
+            event_id: The Google Calendar event ID.
+
+        Returns:
+            True if deleted, False on failure.
+        """
+        if not self.is_authenticated:
+            raise CalendarAuthError("Not authenticated.")
+
+        try:
+            self._service.events().delete(
+                calendarId="primary", eventId=event_id,
+            ).execute()
+            logger.info(f"Deleted Google Calendar event: {event_id}")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to delete calendar event {event_id}: {e}")
+            return False
+
+    def update_event(
+        self,
+        event_id: str,
+        title: str | None = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        description: str | None = None,
+        location: str | None = None,
+    ) -> CalendarEvent | None:
+        """Update an existing Google Calendar event.
+
+        Only provided fields are changed; None fields are left as-is.
+
+        Returns:
+            The updated CalendarEvent, or None on failure.
+        """
+        if not self.is_authenticated:
+            raise CalendarAuthError("Not authenticated.")
+
+        try:
+            # Fetch current event to merge
+            current = self._service.events().get(
+                calendarId="primary", eventId=event_id,
+            ).execute()
+
+            if title is not None:
+                current["summary"] = title
+            if start_time is not None:
+                current["start"] = {"dateTime": start_time.isoformat(), "timeZone": "UTC"}
+            if end_time is not None:
+                current["end"] = {"dateTime": end_time.isoformat(), "timeZone": "UTC"}
+            if description is not None:
+                current["description"] = description
+            if location is not None:
+                current["location"] = location
+
+            result = self._service.events().update(
+                calendarId="primary", eventId=event_id, body=current,
+            ).execute()
+            event = _parse_event(result)
+            if event:
+                logger.info(f"Updated Google Calendar event: {event_id}")
+            return event
+        except Exception as e:
+            logger.warning(f"Failed to update calendar event {event_id}: {e}")
+            return None
 
     # ── Internal ──
 

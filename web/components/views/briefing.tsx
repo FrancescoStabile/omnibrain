@@ -8,7 +8,7 @@
 
 "use client";
 
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useState, useRef } from "react";
 import {
   Mail,
   Calendar,
@@ -424,14 +424,16 @@ function EmptyBriefing() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function BriefingPage() {
-  const {
-    briefingData,
-    setBriefingData,
-    briefingLoading,
-    setBriefingLoading,
-    proposals,
-    setProposals,
-  } = useStore();
+  const briefingData = useStore((s) => s.briefingData);
+  const setBriefingData = useStore((s) => s.setBriefingData);
+  const briefingLoading = useStore((s) => s.briefingLoading);
+  const setBriefingLoading = useStore((s) => s.setBriefingLoading);
+  const proposals = useStore((s) => s.proposals);
+  const setProposals = useStore((s) => s.setProposals);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [pullY, setPullY] = useState(0);
+  const touchStartY = useRef(0);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const loadBriefing = useCallback(async () => {
     setBriefingLoading(true);
@@ -442,6 +444,7 @@ export function BriefingPage() {
       ]);
       if (data.status === "fulfilled") setBriefingData(data.value);
       if (props.status === "fulfilled") setProposals(props.value);
+      setLastUpdated(new Date());
     } finally {
       setBriefingLoading(false);
     }
@@ -453,8 +456,48 @@ export function BriefingPage() {
 
   const d = briefingData;
 
+  // Pull-to-refresh handlers
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (containerRef.current && containerRef.current.scrollTop === 0) {
+      touchStartY.current = e.touches[0].clientY;
+    }
+  }, []);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (touchStartY.current === 0) return;
+    const dy = e.touches[0].clientY - touchStartY.current;
+    if (dy > 0 && dy < 120 && containerRef.current && containerRef.current.scrollTop === 0) {
+      setPullY(dy);
+    }
+  }, []);
+
+  const handleTouchEnd = useCallback(() => {
+    if (pullY > 60 && !briefingLoading) {
+      loadBriefing();
+    }
+    setPullY(0);
+    touchStartY.current = 0;
+  }, [pullY, briefingLoading, loadBriefing]);
+
   return (
-    <div className="max-w-3xl mx-auto p-6 space-y-6" role="region" aria-label="Daily briefing">
+    <div
+      ref={containerRef}
+      className="max-w-3xl mx-auto p-6 space-y-6 overflow-y-auto h-full"
+      role="region"
+      aria-label="Daily briefing"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+    >
+      {/* Pull-to-refresh indicator */}
+      {pullY > 0 && (
+        <div
+          className="flex justify-center transition-opacity"
+          style={{ height: pullY * 0.4, opacity: Math.min(pullY / 60, 1) }}
+        >
+          <RefreshCw className={`h-5 w-5 text-[var(--brand-primary)] ${pullY > 60 ? "animate-spin" : ""}`} />
+        </div>
+      )}
       {/* ── Greeting ── */}
       <header className="flex items-end justify-between">
         <div className="space-y-1">
@@ -467,6 +510,11 @@ export function BriefingPage() {
               month: "long",
               day: "numeric",
             })}
+            {lastUpdated && (
+              <span className="ml-2 text-[var(--text-tertiary)]">
+                · Updated {lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
           </p>
         </div>
         <Button

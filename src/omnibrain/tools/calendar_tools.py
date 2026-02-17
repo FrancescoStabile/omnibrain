@@ -267,6 +267,8 @@ def store_events_in_db(
                 content=event.description[:2000] if event.description else "",
                 metadata=metadata,
                 priority=0,
+                timestamp=event.start_time.isoformat(),
+                external_id=event.id,
             )
             events_stored += 1
         except Exception as e:

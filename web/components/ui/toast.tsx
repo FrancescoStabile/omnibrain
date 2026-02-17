@@ -169,11 +169,11 @@ export function ToastProvider({ children }: { children?: ReactNode }) {
   return (
     <ToastContext.Provider value={ctx}>
       {children}
-      {/* Toast container — fixed bottom-right */}
+      {/* Toast container — bottom-right on desktop, top-center on mobile */}
       {toasts.length > 0 && (
         <div
           aria-label="Notifications"
-          className="fixed bottom-6 right-6 z-50 flex flex-col-reverse gap-2 pointer-events-auto"
+          className="fixed z-50 flex flex-col-reverse gap-2 pointer-events-auto bottom-6 right-6 max-sm:bottom-auto max-sm:right-auto max-sm:top-4 max-sm:left-1/2 max-sm:-translate-x-1/2"
         >
           {toasts.map((t) => (
             <ToastItem key={t.id} toast={t} onDismiss={dismiss} />

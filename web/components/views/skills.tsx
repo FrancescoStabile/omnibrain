@@ -7,7 +7,7 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Search, Download, Trash2, ToggleLeft, ToggleRight, Shield } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { api, type SkillInfo } from "@/lib/api";
@@ -182,26 +182,26 @@ function SkillCard({ skill }: { skill: SkillInfo }) {
 export function SkillsPage() {
   const { skills, setSkills } = useStore();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const res = await api.getSkills();
-        if (!cancelled) setSkills(res.skills);
-      } catch {
-        // API not available — show empty
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+  const loadSkills = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.getSkills();
+      setSkills(res.skills);
+    } catch {
+      setError("Couldn't load skills. The backend may be unreachable.");
+    } finally {
+      setLoading(false);
     }
-    load();
-    return () => {
-      cancelled = true;
-    };
   }, [setSkills]);
+
+  useEffect(() => {
+    loadSkills();
+  }, [loadSkills]);
 
   const filtered = skills.filter((s) => {
     if (category !== "all" && s.category !== category) return false;
@@ -253,7 +253,14 @@ export function SkillsPage() {
       </div>
 
       {/* ── Grid ── */}
-      {loading ? (
+      {error ? (
+        <Card>
+          <CardBody className="text-center py-12 space-y-3">
+            <p className="text-sm text-[var(--error)]">{error}</p>
+            <Button variant="primary" size="sm" onClick={loadSkills}>Try Again</Button>
+          </CardBody>
+        </Card>
+      ) : loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array.from({ length: 6 }).map((_, i) => (
             <SkeletonCard key={i} />

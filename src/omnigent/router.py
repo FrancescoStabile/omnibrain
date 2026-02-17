@@ -510,7 +510,7 @@ class LLMRouter:
         payload = {
             "model": config["model"],
             "max_tokens": 16384 if thinking_budget else 4096,
-            "messages": messages,
+            "messages": self._normalize_messages_anthropic(messages),
             "stream": True,
         }
 
@@ -626,22 +626,34 @@ class LLMRouter:
         normalized = []
         for msg in messages:
             if msg["role"] == "tool":
+                # Prefer top-level tool_call_id (correct flat format)
+                tool_call_id = msg.get("tool_call_id")
                 content_data = msg.get("content", {})
-                if isinstance(content_data, dict):
-                    tool_call_id = content_data.get("tool_call_id", "call_unknown")
+
+                if tool_call_id and not isinstance(content_data, dict):
+                    # Already in correct flat format — pass through
+                    normalized.append({
+                        "role": "tool",
+                        "content": str(content_data),
+                        "tool_call_id": tool_call_id,
+                    })
+                elif isinstance(content_data, dict):
+                    # Legacy nested format: {"content": {"tool_call_id": ..., "content": ...}}
+                    tool_call_id = content_data.get("tool_call_id", tool_call_id or "call_unknown")
                     content_str = content_data.get("content", "")
                     if isinstance(content_str, dict):
                         content_str = json.dumps(content_str)
                     normalized.append({
                         "role": "tool",
                         "content": str(content_str),
-                        "tool_call_id": tool_call_id
+                        "tool_call_id": tool_call_id,
                     })
                 else:
+                    # Fallback — no tool_call_id anywhere
                     normalized.append({
                         "role": "tool",
                         "content": str(content_data),
-                        "tool_call_id": "call_" + uuid.uuid4().hex[:8]
+                        "tool_call_id": "call_" + uuid.uuid4().hex[:8],
                     })
             elif msg["role"] == "assistant" and isinstance(msg.get("content"), list):
                 text_content = ""
@@ -671,7 +683,7 @@ class LLMRouter:
         return normalized
 
     def _validate_message_sequence(self, messages: list[dict]):
-        """Validate assistant→tool message sequence to prevent 400 errors."""
+        """Validate assistant→tool message sequence and fix missing tool results."""
         for i, msg in enumerate(messages):
             if msg.get("role") == "assistant" and "tool_calls" in msg:
                 expected_ids = {tc["id"] for tc in msg["tool_calls"]}
@@ -682,11 +694,18 @@ class LLMRouter:
                     j += 1
                 missing = expected_ids - actual_ids
                 if missing:
-                    logger.error(
-                        f"Message sequence validation failed at position {i+1}: "
-                        f"assistant expects {len(expected_ids)} tools, got {len(actual_ids)}. "
-                        f"Missing: {missing}"
+                    logger.warning(
+                        f"Message sequence validation: fixing {len(missing)} missing tool results at pos {i+1}"
                     )
+                    # Insert placeholder tool results for missing IDs
+                    insert_pos = j
+                    for mid in missing:
+                        messages.insert(insert_pos, {
+                            "role": "tool",
+                            "tool_call_id": mid,
+                            "content": json.dumps({"error": "Tool result not available"}),
+                        })
+                        insert_pos += 1
 
     def _convert_tools_anthropic(self, tools: list[dict]) -> list[dict]:
         """Convert OpenAI tool format to Anthropic format."""
@@ -698,3 +717,77 @@ class LLMRouter:
             }
             for t in tools
         ]
+
+    def _normalize_messages_anthropic(self, messages: list[dict]) -> list[dict]:
+        """Convert OpenAI-format messages (including tool calls/results) to Anthropic format.
+
+        Anthropic requires:
+        - Assistant tool calls as content blocks of type 'tool_use'
+        - Tool results as 'user' messages with content blocks of type 'tool_result'
+        - Strict alternation: user → assistant → user → ...
+        """
+        normalized: list[dict] = []
+
+        for msg in messages:
+            role = msg.get("role", "")
+
+            if role == "system":
+                # System messages are handled separately as payload["system"]
+                continue
+
+            elif role == "assistant" and "tool_calls" in msg:
+                # Convert to Anthropic assistant message with tool_use content blocks
+                content_blocks: list[dict] = []
+                if msg.get("content"):
+                    content_blocks.append({"type": "text", "text": msg["content"]})
+                for tc in msg["tool_calls"]:
+                    func = tc.get("function", {})
+                    args_raw = func.get("arguments", "{}")
+                    if isinstance(args_raw, str):
+                        try:
+                            args = json.loads(args_raw)
+                        except (json.JSONDecodeError, ValueError):
+                            args = {}
+                    else:
+                        args = args_raw
+                    content_blocks.append({
+                        "type": "tool_use",
+                        "id": tc["id"],
+                        "name": func.get("name", ""),
+                        "input": args,
+                    })
+                normalized.append({"role": "assistant", "content": content_blocks})
+
+            elif role == "tool":
+                # Convert to Anthropic user message with tool_result content blocks
+                tool_call_id = msg.get("tool_call_id", "")
+                content = msg.get("content", "")
+                if isinstance(content, dict):
+                    # Handle legacy nested format
+                    tool_call_id = content.get("tool_call_id", tool_call_id)
+                    content = content.get("content", "")
+                if isinstance(content, dict):
+                    content = json.dumps(content)
+
+                tool_result_block = {
+                    "type": "tool_result",
+                    "tool_use_id": tool_call_id,
+                    "content": str(content),
+                }
+
+                # Anthropic allows multiple tool_result blocks in one user message
+                # Merge consecutive tool results into one user message
+                if normalized and normalized[-1].get("role") == "user":
+                    last_content = normalized[-1].get("content", [])
+                    if isinstance(last_content, list) and all(
+                        isinstance(b, dict) and b.get("type") == "tool_result"
+                        for b in last_content
+                    ):
+                        last_content.append(tool_result_block)
+                        continue
+                normalized.append({"role": "user", "content": [tool_result_block]})
+
+            else:
+                normalized.append(msg)
+
+        return normalized

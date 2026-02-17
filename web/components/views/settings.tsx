@@ -160,10 +160,13 @@ function LLMTab() {
   const [showKeys, setShowKeys] = useState(false);
   const [stats, setStats] = useState<Record<string, number>>({});
   const [llmSettings, setLlmSettings] = useState<Settings["llm"] | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     api.getStats().then(setStats).catch(() => {});
-    api.getSettings().then((s) => setLlmSettings(s.llm)).catch(() => {});
+    api.getSettings()
+      .then((s) => setLlmSettings(s.llm))
+      .catch(() => setLoadError(true));
   }, []);
 
   const providers = [
@@ -173,8 +176,9 @@ function LLMTab() {
     { name: "Ollama", key: "OLLAMA_HOST", cost: "Free (local)", role: "Privacy-sensitive" },
   ];
 
-  const totalCost = llmSettings?.current_month_cost ?? 0;
-  const budget = llmSettings?.monthly_budget ?? 10;
+  // Defensive: ensure numbers even if backend returns strings
+  const totalCost = Number(llmSettings?.current_month_cost) || 0;
+  const budget = Number(llmSettings?.monthly_budget) || 10;
 
   return (
     <div className="space-y-4">

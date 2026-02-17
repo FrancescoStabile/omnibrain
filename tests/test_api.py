@@ -82,6 +82,21 @@ def auth_client(auth_server):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+class TestHealth:
+    """Test GET /api/v1/health — no auth required."""
+
+    def test_health_ok(self, client):
+        r = client.get("/api/v1/health")
+        assert r.status_code == 200
+        assert r.json()["status"] == "ok"
+
+    def test_health_no_auth_required(self, auth_client):
+        """Health endpoint works even when auth is configured."""
+        r = auth_client.get("/api/v1/health")
+        assert r.status_code == 200
+        assert r.json()["status"] == "ok"
+
+
 class TestStatus:
     """Test GET /api/v1/status."""
 

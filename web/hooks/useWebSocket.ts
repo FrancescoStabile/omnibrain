@@ -25,6 +25,7 @@ export function setWebSocketToastFn(fn: ((level: string, message: string) => voi
 
 export function useWebSocket() {
   const addNotification = useStore((s) => s.addNotification);
+  const setWsStatus = useStore((s) => s.setWsStatus);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttempt = useRef(0);
   const pingTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -42,6 +43,7 @@ export function useWebSocket() {
 
       ws.onopen = () => {
         reconnectAttempt.current = 0;
+        setWsStatus("connected");
         // Start keep-alive pings
         pingTimer.current = setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
@@ -84,6 +86,7 @@ export function useWebSocket() {
 
       ws.onclose = () => {
         if (pingTimer.current) clearInterval(pingTimer.current);
+        setWsStatus(reconnectAttempt.current > 0 ? "reconnecting" : "disconnected");
         // Exponential backoff reconnect
         const delay = Math.min(
           RECONNECT_BASE_MS * 2 ** reconnectAttempt.current,
@@ -97,9 +100,9 @@ export function useWebSocket() {
         ws.close();
       };
     } catch {
-      // WebSocket not available
+      setWsStatus("disconnected");
     }
-  }, [addNotification]);
+  }, [addNotification, setWsStatus]);
 
   useEffect(() => {
     connect();

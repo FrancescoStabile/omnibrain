@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
+import { AppShellWrapper } from "@/components/layout/app-shell-wrapper";
 import "./globals.css";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://omnibrain.dev";
@@ -66,11 +67,6 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // AppShell is imported dynamically to avoid "use client" in the server layout.
-  // It wraps the entire app — children (route pages) are rendered inside it
-  // as lightweight ViewSync components that just set the active view.
-  const AppShellWrapper = require("@/components/layout/app-shell-wrapper").AppShellWrapper;
-
   return (
     <html lang="en" data-theme="dark" suppressHydrationWarning>
       <head>

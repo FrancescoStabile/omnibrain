@@ -146,7 +146,7 @@ if _fastapi_available:
         email: str
         name: str = ""
         relationship: str = ""
-        organization: str = ""
+        organization: str | None = ""
         interaction_count: int = 0
 
     class RejectRequest(BaseModel):
@@ -321,6 +321,7 @@ class OmniBrainAPIServer:
         self._start_time = datetime.now()
         self._ws_clients: set[Any] = set()
         self._router = router
+        self._calendar_client: Any = None  # Lazy-initialized Google Calendar client
 
         # Load system prompt
         self._system_prompt = self._load_system_prompt()
@@ -368,6 +369,20 @@ class OmniBrainAPIServer:
             return prompt_file.read_text()
         return "You are OmniBrain, a personal AI assistant."
 
+    def _get_calendar_client(self) -> Any:
+        """Lazy-init and return a Google Calendar client, or None."""
+        if self._calendar_client is not None:
+            return self._calendar_client
+        try:
+            from omnibrain.integrations.calendar import CalendarClient
+            client = CalendarClient(self._data_dir)
+            if client.authenticate():
+                self._calendar_client = client
+                return client
+        except Exception as e:
+            logger.debug(f"Calendar client not available: {e}")
+        return None
+
     def _verify_token(self, token: str) -> bool:
         """Verify the API token. Empty auth_token = no auth needed."""
         if not self._auth_token:
@@ -405,6 +420,12 @@ class OmniBrainAPIServer:
             if self._auth_token and (not api_key or not self._verify_token(api_key)):
                 raise HTTPException(status_code=401, detail="Invalid or missing API key")
             return api_key or ""
+
+        # ── GET /api/v1/health (no auth — for health checks, load balancers, run.sh) ──
+
+        @app.get("/api/v1/health")
+        async def health_check() -> dict[str, str]:
+            return {"status": "ok", "version": self._version}
 
         # ── GET /api/v1/status ──
 
@@ -949,6 +970,16 @@ class OmniBrainAPIServer:
         @app.get("/api/v1/settings", response_model=SettingsResponse)
         async def get_settings(token: str = Depends(verify_api_key)) -> SettingsResponse:
             prefs = self._db.get_all_preferences()
+            # Ensure numeric types for LLM cost/budget
+            try:
+                llm_budget = float(prefs.get("llm_budget", 10.0))
+            except (TypeError, ValueError):
+                llm_budget = 10.0
+            try:
+                llm_cost = float(prefs.get("llm_month_cost", 0.0))
+            except (TypeError, ValueError):
+                llm_cost = 0.0
+
             return SettingsResponse(
                 profile={
                     "name": prefs.get("user_name", ""),
@@ -962,10 +993,10 @@ class OmniBrainAPIServer:
                     "critical": prefs.get("notify_critical", True),
                 },
                 llm={
-                    "primary_provider": prefs.get("llm_primary", "deepseek"),
-                    "fallback_provider": prefs.get("llm_fallback", "openai"),
-                    "monthly_budget": prefs.get("llm_budget", 10.0),
-                    "current_month_cost": prefs.get("llm_month_cost", 0.0),
+                    "primary_provider": str(prefs.get("llm_primary", "deepseek")),
+                    "fallback_provider": str(prefs.get("llm_fallback", "openai")),
+                    "monthly_budget": llm_budget,
+                    "current_month_cost": llm_cost,
                 },
                 appearance={
                     "theme": prefs.get("theme", "dark"),
@@ -1052,6 +1083,120 @@ class OmniBrainAPIServer:
                 user_name = self._db.get_preference("user_name", "")
                 if user_name:
                     system += f"\n\nThe user's name is {user_name}."
+
+                # ── 3-tools. Instruct the LLM about its action capabilities ──
+                system += (
+                    "\n\n## Your Action Capabilities\n"
+                    "You have tools to ACTUALLY manage the user's data — don't just say you did something, "
+                    "USE the tools to really do it. Available actions:\n"
+                    "- **search_events / list_events**: Look up events/appointments before modifying them\n"
+                    "- **delete_event**: Remove an event (search first to find the correct ID!)\n"
+                    "- **create_event**: Add a new event/appointment\n"
+                    "- **update_event**: Modify an existing event (search first to find the ID)\n"
+                    "- **list_contacts**: See the user's contacts\n"
+                    "- **list_proposals / approve_proposal / reject_proposal**: Manage pending proposals\n"
+                    "- **set_preference**: Remember a user preference\n\n"
+                    "IMPORTANT: When the user asks you to create, delete, or modify an event, "
+                    "you MUST call the appropriate tool. NEVER just say you did it without actually calling the tool. "
+                    "When deleting or updating, ALWAYS search first to find the right event ID.\n"
+                    "Event IDs are listed in the schedule data below — use them directly when the user "
+                    "refers to a specific event."
+                )
+
+                # ── 3a. Inject LIVE structured data from the database ──
+                # This is the critical bridge: the LLM sees the same data
+                # that the frontend (homepage, timeline, briefing) displays.
+                try:
+                    from datetime import timedelta
+
+                    # Today's events (calendar + extracted)
+                    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                    today_end = today_start + timedelta(days=1)
+                    week_end = today_start + timedelta(days=7)
+
+                    today_events = self._db.get_events(
+                        since=today_start, until=today_end, limit=30,
+                    )
+                    week_events = self._db.get_events(
+                        since=today_start, until=week_end, limit=50,
+                    )
+
+                    if today_events:
+                        events_text = "\n\n## Today's Schedule\n"
+                        for ev in today_events:
+                            ts = ev.get("timestamp", "")
+                            title = ev.get("title", "Untitled")
+                            src = ev.get("source", "")
+                            meta = ev.get("metadata", "")
+                            eid = ev.get("id", "")
+                            time_str = ts[11:16] if len(ts) > 11 and ts[11:16] != "00:00" else "All day"
+                            events_text += f"- [id={eid}] {time_str}: {title}"
+                            if src:
+                                events_text += f" ({src})"
+                            if meta and isinstance(meta, str) and len(meta) < 200:
+                                try:
+                                    import json as _json
+                                    meta_d = _json.loads(meta)
+                                    if meta_d.get("location"):
+                                        events_text += f" @ {meta_d['location']}"
+                                    if meta_d.get("description"):
+                                        events_text += f" — {meta_d['description'][:100]}"
+                                except (ValueError, TypeError):
+                                    pass
+                            events_text += "\n"
+                        system += events_text
+
+                    # This week's events (excluding today, already shown)
+                    future_events = [
+                        ev for ev in week_events
+                        if ev.get("timestamp", "")[:10] != now.strftime("%Y-%m-%d")
+                    ]
+                    if future_events:
+                        system += "\n## This Week (upcoming)\n"
+                        for ev in future_events[:20]:
+                            ts = ev.get("timestamp", "")
+                            title = ev.get("title", "Untitled")
+                            eid = ev.get("id", "")
+                            date_str = ts[:10] if len(ts) >= 10 else "TBD"
+                            time_str = ts[11:16] if len(ts) > 11 and ts[11:16] != "00:00" else "All day"
+                            system += f"- [id={eid}] {date_str} {time_str}: {title}\n"
+
+                    # Pending proposals
+                    proposals = self._db.get_pending_proposals()
+                    if proposals:
+                        system += "\n## Pending Proposals (awaiting user decision)\n"
+                        for prop in proposals[:10]:
+                            system += (
+                                f"- [{prop.get('type', 'action')}] {prop.get('title', 'Untitled')}: "
+                                f"{prop.get('description', '')[:150]}\n"
+                            )
+
+                    # Key contacts (top 10 by interaction count)
+                    contacts = self._db.get_contacts(limit=10)
+                    if contacts:
+                        system += "\n## Key Contacts\n"
+                        for c in contacts:
+                            name = c.name or c.email
+                            system += f"- {name}"
+                            if c.organization:
+                                system += f" ({c.organization})"
+                            if c.relationship:
+                                system += f" — {c.relationship}"
+                            system += "\n"
+
+                    # Recent observations / patterns
+                    observations = self._db.get_observations(days=30)
+                    if observations:
+                        system += "\n## Behavioral Patterns Observed\n"
+                        for obs in observations[:5]:
+                            if isinstance(obs, dict):
+                                system += f"- {obs.get('description', '')[:150]}\n"
+                            else:
+                                system += f"- {obs.description[:150]}\n"
+
+                except Exception as e:
+                    logger.warning(f"Failed to inject live data context: {e}")
+
                 if memory_context:
                     system += memory_context
 
@@ -1110,27 +1255,103 @@ class OmniBrainAPIServer:
                 # Always append current user message as the last one
                 messages.append({"role": "user", "content": body.message})
 
-                # ── 5. Stream from LLM or fallback ──
+                # ── 5. Stream from LLM with tool-calling loop ──
                 full_response = ""
                 total_input_tokens = 0
                 total_output_tokens = 0
+                tools_were_used = False
+                MAX_TOOL_ROUNDS = 5  # Safety limit to prevent infinite loops
 
                 if self._router:
                     try:
-                        async for chunk in self._router.stream(
-                            messages=messages,
-                            system=system,
-                        ):
-                            if chunk.content:
-                                full_response += chunk.content
-                                data = json.dumps({"type": "token", "content": chunk.content})
-                                yield f"data: {data}\n\n"
-                            if chunk.input_tokens:
-                                total_input_tokens += chunk.input_tokens
-                            if chunk.output_tokens:
-                                total_output_tokens += chunk.output_tokens
-                            if chunk.done:
+                        from omnibrain.chat_tools import CHAT_TOOLS, execute_tool
+
+                        tool_round = 0
+                        while tool_round <= MAX_TOOL_ROUNDS:
+                            pending_tool_calls: list[dict] = []
+                            round_content = ""
+
+                            async for chunk in self._router.stream(
+                                messages=messages,
+                                tools=CHAT_TOOLS,
+                                system=system,
+                            ):
+                                if chunk.content:
+                                    round_content += chunk.content
+                                    data = json.dumps({"type": "token", "content": chunk.content})
+                                    yield f"data: {data}\n\n"
+                                if chunk.tool_call:
+                                    pending_tool_calls.append(chunk.tool_call)
+                                if chunk.input_tokens:
+                                    total_input_tokens += chunk.input_tokens
+                                if chunk.output_tokens:
+                                    total_output_tokens += chunk.output_tokens
+                                if chunk.done:
+                                    break
+
+                            full_response += round_content
+
+                            # If no tool calls, we're done — LLM gave a text response
+                            if not pending_tool_calls:
                                 break
+
+                            # ── Execute tool calls and feed results back ──
+                            tool_round += 1
+                            tools_were_used = True
+                            logger.info(
+                                f"Chat tool round {tool_round}: executing {len(pending_tool_calls)} tool(s): "
+                                f"{[tc['name'] for tc in pending_tool_calls]}"
+                            )
+
+                            # Notify the user that we're working on it (streamed but NOT persisted)
+                            for tc in pending_tool_calls:
+                                tool_label = tc["name"].replace("_", " ")
+                                status_msg = f"_[Executing: {tool_label}...]_\n\n"
+                                data = json.dumps({"type": "token", "content": status_msg})
+                                yield f"data: {data}\n\n"
+
+                            # Add assistant message with tool calls to conversation
+                            assistant_tool_msg: dict[str, Any] = {
+                                "role": "assistant",
+                                "tool_calls": [
+                                    {
+                                        "id": tc["id"],
+                                        "type": "function",
+                                        "function": {
+                                            "name": tc["name"],
+                                            "arguments": json.dumps(tc["arguments"]),
+                                        },
+                                    }
+                                    for tc in pending_tool_calls
+                                ],
+                            }
+                            if round_content:
+                                assistant_tool_msg["content"] = round_content
+                            messages.append(assistant_tool_msg)
+
+                            # Execute each tool and add results
+                            for tc in pending_tool_calls:
+                                result = await execute_tool(
+                                    db=self._db,
+                                    tool_name=tc["name"],
+                                    arguments=tc["arguments"],
+                                    calendar_client=self._get_calendar_client(),
+                                )
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc["id"],
+                                    "content": result,
+                                })
+
+                            # Loop continues — LLM will see tool results and respond
+                        else:
+                            # Exceeded MAX_TOOL_ROUNDS — send a safety message
+                            logger.warning("Chat tool-calling exceeded max rounds")
+                            safety_msg = "\n\n_[Action limit reached. Please verify the results.]_"
+                            data = json.dumps({"type": "token", "content": safety_msg})
+                            yield f"data: {data}\n\n"
+                            # Don't add safety message to full_response — it's UI-only
+
                     except Exception as e:
                         logger.error(f"LLM streaming failed: {e}")
                         error_msg = "I'm having trouble connecting to the AI service right now. Please try again in a moment."
@@ -1185,7 +1406,14 @@ class OmniBrainAPIServer:
                         pass
 
                 # ── 8b. Extract structured data from conversation ──
-                if self._router and body.message.strip() and full_response.strip():
+                # Skip extraction if tool calls were made — tools already
+                # performed the actions (created/deleted events, etc.)
+                if (
+                    self._router
+                    and body.message.strip()
+                    and full_response.strip()
+                    and not tools_were_used
+                ):
                     try:
                         from omnibrain.conversation_extractor import extract_and_persist
 

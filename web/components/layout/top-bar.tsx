@@ -5,7 +5,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Moon, Sun, User, Bell, LogOut, ChevronDown } from "lucide-react";
+import { Moon, Sun, User, Bell, LogOut, ChevronDown, WifiOff } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -13,9 +13,11 @@ import { MobileMenuButton } from "./sidebar";
 import { NotificationPanel } from "./notification-panel";
 import { cn } from "@/lib/utils";
 import { useNavigate } from "@/hooks/useNavigate";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 export function TopBar() {
-  const { theme, toggleTheme, notifications, googleConnected, setGoogleConnected } = useStore();
+  const { theme, toggleTheme, notifications, googleConnected, setGoogleConnected, wsStatus } = useStore();
+  const online = useOnlineStatus();
   const navigate = useNavigate();
   const [notifOpen, setNotifOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -51,10 +53,28 @@ export function TopBar() {
   }, [setGoogleConnected]);
 
   return (
+    <>
+      {/* Offline banner */}
+      {!online && (
+        <div className="flex items-center justify-center gap-2 bg-[var(--warning)] px-4 py-1.5 text-xs font-medium text-black">
+          <WifiOff className="h-3.5 w-3.5" />
+          You&apos;re offline. Reconnect to sync.
+        </div>
+      )}
     <header className="flex items-center justify-between gap-2 h-14 px-4 sm:px-6 border-b border-[var(--border-subtle)] bg-[var(--bg-primary)]">
       <MobileMenuButton />
       <div className="flex-1" />
       <div className="flex items-center gap-1.5">
+        {/* WebSocket status indicator */}
+        <div
+          title={wsStatus === "connected" ? "Connected" : wsStatus === "reconnecting" ? "Reconnecting..." : "Disconnected"}
+          className={cn(
+            "h-2 w-2 rounded-full transition-colors",
+            wsStatus === "connected" && "bg-[var(--success)]",
+            wsStatus === "reconnecting" && "bg-[var(--warning)] animate-pulse",
+            wsStatus === "disconnected" && "bg-[var(--error)]",
+          )}
+        />
         {/* Theme toggle */}
         <Button variant="icon" size="sm" onClick={toggleTheme} aria-label="Toggle theme">
           {theme === "dark" ? (
@@ -141,5 +161,6 @@ export function TopBar() {
         </div>
       </div>
     </header>
+    </>
   );
 }

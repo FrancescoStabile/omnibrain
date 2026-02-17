@@ -535,7 +535,14 @@ class BriefingGenerator:
                 source="chat", since=today_start, until=today_end, limit=20,
             )
             if chat_events:
-                events = (events or []) + chat_events
+                # Deduplicate: skip chat events whose title+date already appear
+                # in the calendar events (common when extractor shadows a tool action)
+                existing = {(e.get("title", "").lower(), e.get("timestamp", "")[:10]) for e in events}
+                for ce in chat_events:
+                    key = (ce.get("title", "").lower(), ce.get("timestamp", "")[:10])
+                    if key not in existing:
+                        events.append(ce)
+                        existing.add(key)
 
             if events:
                 section.total_events = len(events)

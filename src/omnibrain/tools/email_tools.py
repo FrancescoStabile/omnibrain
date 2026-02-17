@@ -301,6 +301,8 @@ def store_emails_in_db(
                 content=email.body[:2000] if email.body else "",  # Cap body at 2KB
                 metadata=metadata,
                 priority=0,
+                timestamp=email.date.isoformat() if email.date else None,
+                external_id=email.id,
             )
             events_stored += 1
         except Exception as e:

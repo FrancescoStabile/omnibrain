@@ -74,6 +74,9 @@ Rules:
 - If nothing actionable, return {"events":[],"contacts":[],"user_facts":[],"action_items":[]}.
 - Dates should be absolute (resolve "tomorrow", "next Tuesday", etc. using today's date).
 - Keep titles concise (< 60 chars).
+- If the assistant used tools to create, delete, or modify events, DO NOT re-extract those \
+  events — they are already handled. Only extract NEW information not addressed by tool actions.
+- Do NOT extract events that the assistant confirmed were already created, deleted, or updated.
 """
 
 
@@ -104,16 +107,20 @@ async def extract_and_persist(
         return {}
 
     # Skip very short / trivial exchanges
-    if len(user_message.strip()) < 10:
+    if len(user_message.strip()) < 20:
         return {}
 
     now = datetime.now()
     today_str = now.strftime("%Y-%m-%d")
 
+    # Strip any tool-status noise from the response before extraction
+    import re
+    clean_response = re.sub(r'_\[Executing:.*?\]_\s*', '', assistant_response)
+
     prompt = (
         f"Today is {now.strftime('%A, %B %d, %Y')}.\n\n"
         f"User: {user_message}\n\n"
-        f"Assistant: {assistant_response[:1000]}"
+        f"Assistant: {clean_response[:3000]}"
     )
 
     # Sanitize external content if sanitizer is available
@@ -226,11 +233,23 @@ async def extract_and_persist(
 
         counts["user_facts"] = len(facts)
 
-        # ── Persist action items as proposals ──
+        # ── Persist action items as proposals (with dedup) ──
         actions = data.get("action_items", [])
+        # Get existing pending proposals to avoid duplicates
+        existing_titles: set[str] = set()
+        try:
+            pending = db.get_pending_proposals()
+            existing_titles = {p.get("title", "").lower() for p in pending}
+        except Exception:
+            pass
+
         for a in actions:
             title = a.get("title", "")
             if not title:
+                continue
+            # Skip if a proposal with essentially the same title already exists
+            if title.lower() in existing_titles:
+                logger.debug("Skipping duplicate proposal: %s", title)
                 continue
             deadline = a.get("deadline")
             priority = min(max(int(a.get("priority", 2)), 1), 5)

@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS events (
     metadata TEXT,
     processed BOOLEAN DEFAULT 0,
     priority INTEGER DEFAULT 0,
+    external_id TEXT,
+    UNIQUE(source, external_id) ON CONFLICT REPLACE,
     UNIQUE(source, event_type, title, timestamp) ON CONFLICT REPLACE
 );
 
@@ -231,10 +233,14 @@ class OmniBrainDB:
             )
             # Migration: add UNIQUE constraint to events if missing
             self._migrate_events_unique(conn)
+            # Migration: add external_id column to events if missing
+            self._migrate_events_external_id(conn)
             # Migration: add snoozed_until column to proposals if missing
             self._migrate_proposals_snooze(conn)
             # Migration: add UNIQUE constraint + generated_at to briefings if missing
             self._migrate_briefings_unique(conn)
+            # Dedup cleanup — remove any existing duplicate events
+            self._dedup_events(conn)
         logger.info(f"Database initialized at {self.db_path}")
 
     def _migrate_events_unique(self, conn: sqlite3.Connection) -> None:
@@ -278,6 +284,40 @@ class OmniBrainDB:
             # Rebuild FTS
             conn.execute("INSERT INTO events_fts(events_fts) VALUES('rebuild')")
             logger.info("Events table migration complete")
+
+    def _migrate_events_external_id(self, conn: sqlite3.Connection) -> None:
+        """Add external_id column to events if missing."""
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(events)").fetchall()]
+        if "external_id" not in cols:
+            conn.execute("ALTER TABLE events ADD COLUMN external_id TEXT")
+            # Backfill external_id from metadata where possible
+            rows = conn.execute(
+                "SELECT id, metadata FROM events WHERE metadata IS NOT NULL"
+            ).fetchall()
+            for row in rows:
+                try:
+                    meta = json.loads(row[1]) if row[1] else {}
+                    ext_id = meta.get("calendar_id") or meta.get("gmail_id")
+                    if ext_id:
+                        conn.execute(
+                            "UPDATE events SET external_id = ? WHERE id = ?",
+                            (ext_id, row[0]),
+                        )
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            logger.info("Added external_id column to events + backfilled from metadata")
+
+    def _dedup_events(self, conn: sqlite3.Connection) -> None:
+        """Remove duplicate events, keeping the row with the lowest rowid."""
+        deleted = conn.execute(
+            """DELETE FROM events WHERE rowid NOT IN (
+                   SELECT MIN(rowid) FROM events
+                   GROUP BY source, event_type, title, timestamp
+               )"""
+        ).rowcount
+        if deleted:
+            logger.info(f"Dedup cleanup: removed {deleted} duplicate events")
+            conn.execute("INSERT INTO events_fts(events_fts) VALUES('rebuild')")
 
     def _migrate_proposals_snooze(self, conn: sqlite3.Connection) -> None:
         """Add snoozed_until column to proposals if missing."""
@@ -343,20 +383,21 @@ class OmniBrainDB:
         metadata: dict[str, Any] | None = None,
         priority: int = 0,
         timestamp: str | None = None,
+        external_id: str | None = None,
     ) -> int:
         """Insert an event into the event stream. Returns the event ID."""
         with self._connect() as conn:
             if timestamp:
                 cursor = conn.execute(
-                    """INSERT INTO events (source, event_type, title, content, metadata, priority, timestamp)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (source, event_type, title, content, json.dumps(metadata or {}), priority, timestamp),
+                    """INSERT INTO events (source, event_type, title, content, metadata, priority, timestamp, external_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (source, event_type, title, content, json.dumps(metadata or {}), priority, timestamp, external_id),
                 )
             else:
                 cursor = conn.execute(
-                    """INSERT INTO events (source, event_type, title, content, metadata, priority)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (source, event_type, title, content, json.dumps(metadata or {}), priority),
+                    """INSERT INTO events (source, event_type, title, content, metadata, priority, external_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (source, event_type, title, content, json.dumps(metadata or {}), priority, external_id),
                 )
             return cursor.lastrowid or 0
 
@@ -415,6 +456,74 @@ class OmniBrainDB:
                 (query, limit),
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def delete_event(self, event_id: int) -> bool:
+        """Delete an event by ID. Returns True if a row was actually deleted."""
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+            return cursor.rowcount > 0
+
+    def update_event(
+        self,
+        event_id: int,
+        title: str | None = None,
+        content: str | None = None,
+        timestamp: str | None = None,
+        event_type: str | None = None,
+        priority: int | None = None,
+    ) -> bool:
+        """Update fields of an existing event. Only non-None fields are changed.
+        Returns True if a row was actually updated."""
+        sets: list[str] = []
+        params: list[Any] = []
+        if title is not None:
+            sets.append("title = ?")
+            params.append(title)
+        if content is not None:
+            sets.append("content = ?")
+            params.append(content)
+        if timestamp is not None:
+            sets.append("timestamp = ?")
+            params.append(timestamp)
+        if event_type is not None:
+            sets.append("event_type = ?")
+            params.append(event_type)
+        if priority is not None:
+            sets.append("priority = ?")
+            params.append(priority)
+        if not sets:
+            return False
+        params.append(event_id)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"UPDATE events SET {', '.join(sets)} WHERE id = ?", params
+            )
+            return cursor.rowcount > 0
+
+    def get_event_by_id(self, event_id: int) -> dict[str, Any] | None:
+        """Get a single event by its ID."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+            return dict(row) if row else None
+
+    def find_event_by_external_id(self, source: str, external_id: str) -> dict[str, Any] | None:
+        """Find an event by its external ID (Google Calendar ID, Gmail ID, etc.)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM events WHERE source = ? AND external_id = ?",
+                (source, external_id),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def vacuum(self) -> None:
+        """Run VACUUM to reclaim space and defragment the database."""
+        try:
+            conn = sqlite3.connect(str(self.db_path), timeout=10)
+            conn.execute("VACUUM")
+            conn.close()
+            logger.info("Database VACUUM completed")
+        except Exception as e:
+            logger.warning(f"VACUUM failed: {e}")
 
     # ── Contacts ──
 

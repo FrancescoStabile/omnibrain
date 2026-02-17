@@ -7,7 +7,7 @@
 "use client";
 
 import { useRef, useState, useEffect, useMemo, useCallback, type FormEvent, type KeyboardEvent } from "react";
-import { Send, Sparkles, Brain, Copy, RotateCcw, AlertCircle, Plus, Trash2, MessageSquare, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Send, Sparkles, Brain, Copy, Check, RotateCcw, AlertCircle, Plus, Trash2, MessageSquare, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useStore, type View } from "@/lib/store";
@@ -71,6 +71,17 @@ function buildSuggestions(onboardingResult: ReturnType<typeof useStore.getState>
 
 function ChatBubble({ message, onAction }: { message: ChatMessage; onAction: (action: ChatAction) => void }) {
   const isUser = message.role === "user";
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(message.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const timestamp = message.timestamp
+    ? new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : null;
 
   return (
     <div
@@ -108,16 +119,27 @@ function ChatBubble({ message, onAction }: { message: ChatMessage; onAction: (ac
             ))}
           </div>
         )}
+
+        {/* Timestamp */}
+        {timestamp && (
+          <span className="block mt-1.5 text-[10px] opacity-50">
+            {timestamp}
+          </span>
+        )}
       </div>
 
       {/* Copy button for AI messages */}
       {!isUser && (
         <button
           className="self-start ml-1 mt-2 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors"
-          onClick={() => navigator.clipboard.writeText(message.content)}
-          title="Copy"
+          onClick={handleCopy}
+          title={copied ? "Copied!" : "Copy"}
         >
-          <Copy className="h-3.5 w-3.5" />
+          {copied ? (
+            <Check className="h-3.5 w-3.5 text-[var(--success)]" />
+          ) : (
+            <Copy className="h-3.5 w-3.5" />
+          )}
         </button>
       )}
     </div>
@@ -149,12 +171,18 @@ function TypingIndicator() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function ChatPage() {
-  const {
-    messages, addMessage, appendToLastAssistant, setMessages,
-    chatLoading, setChatLoading,
-    chatSessionId, setChatSessionId, chatSessions, setChatSessions,
-    onboardingResult,
-  } = useStore();
+  // Individual selectors prevent re-renders from unrelated store changes
+  const messages = useStore((s) => s.messages);
+  const addMessage = useStore((s) => s.addMessage);
+  const appendToLastAssistant = useStore((s) => s.appendToLastAssistant);
+  const setMessages = useStore((s) => s.setMessages);
+  const chatLoading = useStore((s) => s.chatLoading);
+  const setChatLoading = useStore((s) => s.setChatLoading);
+  const chatSessionId = useStore((s) => s.chatSessionId);
+  const setChatSessionId = useStore((s) => s.setChatSessionId);
+  const chatSessions = useStore((s) => s.chatSessions);
+  const setChatSessions = useStore((s) => s.setChatSessions);
+  const onboardingResult = useStore((s) => s.onboardingResult);
   const [input, setInput] = useState("");
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [failedMessage, setFailedMessage] = useState<string | null>(null);

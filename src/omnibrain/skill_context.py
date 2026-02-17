@@ -492,6 +492,16 @@ class EventBus:
             except Exception as e:
                 logger.warning(f"EventBus listener error on '{event_type}': {e}")
 
+    def publish(self, event_type: str, data: dict[str, Any]) -> None:
+        """Synchronous publish - schedules emit() in the current event loop."""
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.emit(event_type, data))
+        except RuntimeError:
+            # No running loop - log warning
+            logger.warning(f"EventBus.publish('{event_type}') called outside async context")
+
     @property
     def listener_count(self) -> int:
         return sum(len(v) for v in self._listeners.values())

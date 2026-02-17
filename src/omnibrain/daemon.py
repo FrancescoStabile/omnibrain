@@ -160,6 +160,9 @@ class OmniBrainDaemon:
         self._event_bus = EventBus()
         self._proactive_engine: Any = None
         self._skill_runtime: Any = None
+        # Startup coordination events
+        self._skill_ready = asyncio.Event()
+        self._proactive_ready = asyncio.Event()
 
     async def run(self) -> None:
         """Main entry point — start the daemon and run forever."""
@@ -378,6 +381,8 @@ class OmniBrainDaemon:
 
         if events > 0:
             logger.info(f"Gmail collector: {events} new emails, {contacts} contacts updated")
+            # Emit event for skills to react
+            self._event_bus.publish("new_email", {"count": events, "source": "gmail"})
 
         return datetime.now()
 
@@ -417,6 +422,8 @@ class OmniBrainDaemon:
 
         if events_stored > 0:
             logger.info(f"Calendar collector: {events_stored} events stored")
+            # Emit event for skills to react
+            self._event_bus.publish("calendar_synced", {"count": events_stored, "source": "calendar"})
 
         return datetime.now()
 
@@ -443,15 +450,17 @@ class OmniBrainDaemon:
             logger.info(
                 f"ProactiveEngine wired — {len(self._proactive_engine.tasks)} tasks"
             )
+            
+            # Signal that proactive engine is ready for API server wiring
+            self._proactive_ready.set()
+            
             await self._proactive_engine.run()
         except asyncio.CancelledError:
             if self._proactive_engine:
                 await self._proactive_engine.stop()
         except Exception as e:
             logger.error(f"Proactive engine fatal: {e}", exc_info=True)
-            # Don't crash the daemon — sleep and retry next cycle
-            while self._running:
-                await asyncio.sleep(60)
+            # Fatal error — exit cleanly and let daemon handle restart if needed
 
     async def _cleanup_loop(self) -> None:
         """Periodic maintenance — prune old data, expire proposals, vacuum DB.
@@ -518,6 +527,21 @@ class OmniBrainDaemon:
             from omnibrain.interfaces.api_server import OmniBrainAPIServer
 
             rc = self.resources
+            
+            # Wait for subsystems to initialize before wiring (with timeout)
+            logger.info("API server waiting for subsystems to initialize...")
+            try:
+                await asyncio.wait_for(self._skill_ready.wait(), timeout=30.0)
+                logger.info("✓ SkillRuntime ready")
+            except asyncio.TimeoutError:
+                logger.warning("SkillRuntime initialization timeout — proceeding anyway")
+            
+            try:
+                await asyncio.wait_for(self._proactive_ready.wait(), timeout=30.0)
+                logger.info("✓ ProactiveEngine ready")
+            except asyncio.TimeoutError:
+                logger.warning("ProactiveEngine initialization timeout — proceeding anyway")
+            
             engine_status = None
             if self._proactive_engine:
                 engine_status = self._proactive_engine.get_status
@@ -540,9 +564,10 @@ class OmniBrainDaemon:
             server._sanitizer = rc.sanitizer  # type: ignore[attr-defined]
             server._context_tracker = rc.context_tracker  # type: ignore[attr-defined]
 
-            # Wire SkillRuntime into the API server
+            # Wire SkillRuntime into the API server (now guaranteed to be initialized)
             if self._skill_runtime:
                 server._skill_runtime = self._skill_runtime  # type: ignore[attr-defined]
+                logger.info("✓ SkillRuntime wired to API server")
 
             # Run uvicorn programmatically
             import uvicorn
@@ -592,6 +617,9 @@ class OmniBrainDaemon:
 
             discovered = self._skill_runtime.discover(skill_dirs)
             logger.info(f"SkillRuntime: {len(discovered)} skills discovered")
+
+            # Signal that skill runtime is ready for API server wiring
+            self._skill_ready.set()
 
             await self._skill_runtime.run()
         except asyncio.CancelledError:

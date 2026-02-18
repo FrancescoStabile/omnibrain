@@ -1,0 +1,65 @@
+# OmniBrain Docker ignore
+# Keeps build context small and fast
+
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.eggs
+dist
+build
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.venv
+venv
+
+# Node
+web/node_modules
+web/.next
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Data (user data must not leak into image)
+.omnibrain
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+docker-compose*.yml
+compose*.yaml
+Dockerfile*
+.dockerignore
+
+# Docs & meta (not needed at runtime)
+*.md
+!README.md
+LICENSE
+CONTRIBUTING.md
+CHANGELOG.md
+manifesto.md
+ARCHITECTURE.md
+CLAUDE.md
+
+# Tests (not needed in production image)
+tests
+pytest.ini
+
+# Logs
+*.log
+.log-*
+.pid-*
+
+# Environment (mounted separately)
+.env
+.env.*

@@ -32,6 +32,7 @@ from typing import Any, Callable, Coroutine
 
 from omnibrain.briefing import BriefingGenerator
 from omnibrain.models import BriefingType, Observation
+from omnibrain.proactive.scorer import PriorityScorer, ScoringSignals
 
 logger = logging.getLogger("omnibrain.proactive")
 
@@ -164,6 +165,7 @@ class ProactiveEngine:
         self._review_engine: Any = None
         self._pattern_detector: Any = None
         self._memory: Any = None
+        self._scorer: PriorityScorer = PriorityScorer()
 
     @property
     def running(self) -> bool:
@@ -189,6 +191,7 @@ class ProactiveEngine:
         review_engine: Any = None,
         pattern_detector: Any = None,
         context_tracker: Any = None,
+        scorer: PriorityScorer | None = None,
         check_interval_minutes: int = 5,
         briefing_time: str = "07:00",
         evening_time: str = "22:00",
@@ -203,6 +206,7 @@ class ProactiveEngine:
             review_engine: ReviewEngine for evening/weekly summaries.
             pattern_detector: PatternDetector for pattern detection.
             context_tracker: ContextTracker for dormant project resurrection.
+            scorer: PriorityScorer for score-driven notification levels.
             check_interval_minutes: How often to check emails/calendar.
             briefing_time: Morning briefing time (HH:MM).
             evening_time: Evening summary time (HH:MM).
@@ -214,6 +218,8 @@ class ProactiveEngine:
         self._review_engine = review_engine
         self._pattern_detector = pattern_detector
         self._context_tracker = context_tracker
+        if scorer:
+            self._scorer = scorer
 
         # Interval tasks
         self.register_task(ScheduledTask(
@@ -320,63 +326,123 @@ class ProactiveEngine:
     # ── Default Task Handlers ──
 
     async def _check_emails(self) -> None:
-        """Check for new emails and classify urgent ones."""
+        """Check for new emails and score them for priority-driven notifications."""
         try:
+            import json as _json
             events = self._db.get_events(source="gmail", unprocessed_only=True, limit=20)
-            urgent_count = 0
+            scored_emails: list[tuple[str, str, str]] = []  # (level, title, summary)
 
             for event in events:
                 self._db.mark_event_processed(event["id"])
 
                 try:
-                    import json
-                    metadata = json.loads(event.get("metadata", "{}"))
-                    if metadata.get("urgency") in ("critical", "high"):
-                        urgent_count += 1
+                    metadata = _json.loads(event.get("metadata", "{}"))
                 except (ValueError, TypeError):
-                    pass
+                    metadata = {}
 
-            if urgent_count > 0:
+                # Score via PriorityScorer for intelligent notification levels
+                sender = metadata.get("sender", "")
+                urgency = metadata.get("urgency", "medium")
+                category = metadata.get("category", "fyi")
+
+                # Check if sender is a VIP contact
+                is_vip = False
+                relationship = "unknown"
+                if sender:
+                    try:
+                        contacts = self._db.get_contacts(search=sender, limit=1)
+                        if contacts:
+                            c = contacts[0]
+                            is_vip = getattr(c, "is_vip", False)
+                            relationship = getattr(c, "relationship", "unknown") or "unknown"
+                    except Exception:
+                        pass
+
+                result = self._scorer.score_email(
+                    urgency=urgency,
+                    sender_is_vip=is_vip,
+                    sender_relationship=relationship,
+                    category=category,
+                )
+
+                title = event.get("title", "New email")
+                scored_emails.append((
+                    result.notification_level,
+                    title,
+                    result.reason,
+                ))
+
+            # Group notifications by level — don't spam
+            critical = [(t, r) for lvl, t, r in scored_emails if lvl == NotificationLevel.CRITICAL]
+            important = [(t, r) for lvl, t, r in scored_emails if lvl == NotificationLevel.IMPORTANT]
+
+            if critical:
+                self._notify(
+                    NotificationLevel.CRITICAL,
+                    f"{len(critical)} Critical Email(s)",
+                    "; ".join(t for t, _ in critical[:3]),
+                )
+            if important:
                 self._notify(
                     NotificationLevel.IMPORTANT,
-                    "Urgent Emails",
-                    f"{urgent_count} urgent email(s) need your attention",
+                    f"{len(important)} Important Email(s)",
+                    "; ".join(t for t, _ in important[:3]),
                 )
 
         except Exception as e:
             logger.error(f"check_emails failed: {e}")
 
     async def _check_calendar(self) -> None:
-        """Check upcoming meetings and propose briefs for important ones."""
+        """Check upcoming meetings and score them for priority-driven notifications."""
         try:
-            # Fetch recent calendar events (last 7 days) — the loop below
-            # filters to those starting within 2 hours from now.
+            import json as _json
             since_cutoff = datetime.now() - timedelta(days=7)
             events = self._db.get_events(source="calendar", since=since_cutoff, limit=50)
 
-            import json
             now = datetime.now()
-            upcoming_soon = []
 
             for event in events:
                 try:
-                    metadata = json.loads(event.get("metadata", "{}"))
+                    metadata = _json.loads(event.get("metadata", "{}"))
                     start_str = metadata.get("start_time", "")
-                    if start_str:
-                        start = datetime.fromisoformat(start_str)
-                        if now < start < now + timedelta(hours=2):
-                            attendees = json.loads(metadata.get("attendees", "[]"))
-                            if len(attendees) >= 3 or event.get("priority", 0) >= 3:
-                                upcoming_soon.append(event.get("title", ""))
+                    if not start_str:
+                        continue
+
+                    start = datetime.fromisoformat(start_str)
+                    if not (now < start < now + timedelta(hours=2)):
+                        continue
+
+                    attendees = _json.loads(metadata.get("attendees", "[]"))
+                    has_vip = False
+                    for att in attendees:
+                        email = att if isinstance(att, str) else att.get("email", "")
+                        try:
+                            contacts = self._db.get_contacts(search=email, limit=1)
+                            if contacts and getattr(contacts[0], "is_vip", False):
+                                has_vip = True
+                                break
+                        except Exception:
+                            pass
+
+                    # Score event using PriorityScorer
+                    result = self._scorer.score_event(
+                        deadline=start,
+                        attendee_count=len(attendees),
+                        is_recurring=metadata.get("recurring", False),
+                        has_vip_attendee=has_vip,
+                        priority=event.get("priority", 3),
+                    )
+
+                    title = event.get("title", "Meeting")
+                    minutes_until = int((start - now).total_seconds() / 60)
+                    self._notify(
+                        result.notification_level,
+                        f"Meeting in {minutes_until}min",
+                        f"{title} — {result.reason}",
+                    )
+
                 except (ValueError, TypeError):
                     pass
-
-            if upcoming_soon:
-                self._notify(
-                    NotificationLevel.IMPORTANT,
-                    "Upcoming Meeting",
-                    f"Upcoming: {', '.join(upcoming_soon[:3])}",
-                )
 
         except Exception as e:
             logger.error(f"check_calendar failed: {e}")

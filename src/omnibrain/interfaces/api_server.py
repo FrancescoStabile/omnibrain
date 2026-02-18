@@ -843,6 +843,36 @@ class OmniBrainAPIServer:
                 for k, v in body.llm.items():
                     pref_key = mapping.get(k, k)
                     self._db.set_preference(pref_key, v, learned_from="api")
+
+                # Hot-reload LLM router when provider changes
+                if "primary_provider" in body.llm or "fallback_provider" in body.llm:
+                    try:
+                        from omnigent.router import LLMRouter, Provider
+                        _provider_map = {
+                            "deepseek": Provider.DEEPSEEK,
+                            "openai": Provider.OPENAI,
+                            "claude": Provider.CLAUDE,
+                            "local": Provider.LOCAL,
+                        }
+                        primary_str = (
+                            body.llm.get("primary_provider")
+                            or self._db.get_preference("llm_primary")
+                            or "deepseek"
+                        )
+                        fallback_str = (
+                            body.llm.get("fallback_provider")
+                            or self._db.get_preference("llm_fallback")
+                        )
+                        primary = _provider_map.get(primary_str, Provider.DEEPSEEK)
+                        fallback = _provider_map.get(fallback_str) if fallback_str else None
+                        new_router = LLMRouter(primary=primary, fallback=fallback)
+                        self._router = new_router
+                        logger.info(
+                            f"LLM router hot-reloaded: primary={primary_str}, "
+                            f"fallback={fallback_str or 'none'}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to hot-reload LLM router: {e}")
             if body.appearance:
                 for k, v in body.appearance.items():
                     self._db.set_preference(k, v, learned_from="api")
@@ -861,6 +891,9 @@ class OmniBrainAPIServer:
         register_onboarding_routes(app, self, verify_api_key)
         register_knowledge_routes(app, self, verify_api_key)
         register_patterns_routes(app, self, verify_api_key)
+
+        from omnibrain.interfaces.routes.data import register_data_routes
+        register_data_routes(app, self, verify_api_key)
 
         # ══════════════════════════════════════════════════════════════════
         # WebSocket feed for real-time events
@@ -925,9 +958,24 @@ def create_api_server(
         if auth_token:
             logger.info("API auth token: %s", auth_token[:8] + "...")
 
+    # ── Memory Manager with optional ChromaDB ──
     memory = None
     try:
-        memory = MemoryManager(actual_dir, enable_chroma=False)
+        # Check DB preference for ChromaDB toggle
+        enable_chroma = False
+        try:
+            chroma_pref = db.get_preference("chroma_enabled")
+            if chroma_pref and str(chroma_pref).lower() in ("true", "1", "yes"):
+                import importlib
+                if importlib.util.find_spec("chromadb"):
+                    enable_chroma = True
+                    logger.info("ChromaDB enabled via settings")
+                else:
+                    logger.warning("ChromaDB requested but package not installed")
+        except Exception:
+            pass
+
+        memory = MemoryManager(actual_dir, enable_chroma=enable_chroma)
     except Exception:
         pass
 
@@ -971,8 +1019,10 @@ def create_api_server(
     try:
         from omnibrain.proactive.engine import ProactiveEngine
         from omnibrain.proactive.patterns import PatternDetector
+        from omnibrain.proactive.scorer import PriorityScorer
 
         pattern_detector = PatternDetector(db)
+        scorer = PriorityScorer()
 
         # Wire ReviewEngine — 693 LOC of evening/weekly review logic
         try:
@@ -988,6 +1038,7 @@ def create_api_server(
             memory_manager=memory,
             review_engine=review_engine,
             pattern_detector=pattern_detector,
+            scorer=scorer,
         )
 
         logger.info("ProactiveEngine + PatternDetector wired")
@@ -1068,12 +1119,39 @@ def create_api_server(
     server._sanitizer = sanitizer
     server._approval_gate = approval_gate
 
-    # ── Wire EventBus "notification" → WebSocket broadcast ──
-    async def _event_bus_to_ws(event_type: str, data: dict[str, Any]) -> None:
-        """Bridge EventBus notifications → WebSocket broadcast."""
-        await server.broadcast("notification", data)
+    # ── Wire EventBus → WebSocket broadcast (multi-topic) ──
+    # Bridge all major event topics to connected WebSocket clients.
+    # Each topic gets a typed message: {type, topic, data, timestamp}
+    _ws_bridge_topics = [
+        "notification",   # System notifications
+        "proposal",       # New/updated proposals
+        "skill",          # Skill events (installed, triggered, error)
+        "pattern",        # Pattern detection results
+        "system",         # System status changes
+        "email",          # New email events
+        "calendar",       # Calendar events
+    ]
 
-    event_bus.subscribe("notification", _event_bus_to_ws)
+    async def _event_bus_to_ws(event_type: str, data: dict[str, Any]) -> None:
+        """Bridge EventBus events → WebSocket broadcast.
+
+        Sends typed messages so the frontend can route them appropriately.
+        """
+        # Determine the top-level topic from the event type (e.g., "proposal.new" → "proposal")
+        topic = event_type.split(".")[0] if "." in event_type else event_type
+        payload = {
+            "topic": event_type,
+            "data": data,
+            "timestamp": datetime.now().isoformat(),
+        }
+        await server.broadcast(topic, payload)
+
+    for topic in _ws_bridge_topics:
+        event_bus.subscribe(topic, _event_bus_to_ws)
+
+    # Also subscribe with wildcard for sub-topics (e.g., "proposal.new", "skill.error")
+    for topic in _ws_bridge_topics:
+        event_bus.subscribe(f"{topic}.*", _event_bus_to_ws)
 
     # ── Wire ProactiveEngine notify → WebSocket broadcast ──
     if engine:

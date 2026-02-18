@@ -1,0 +1,69 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# OmniBrain — Docker Compose
+# One-command install: docker compose up
+#
+# Services:
+#   omnibrain  — Backend (Python) + Frontend (Next.js)
+#   ollama     — Local LLM (optional, use --profile local)
+#
+# Usage:
+#   docker compose up                    → cloud LLM mode
+#   docker compose --profile local up    → + local Ollama
+#   docker compose up --build            → rebuild after code changes
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  omnibrain:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: omnibrain
+    restart: unless-stopped
+    ports:
+      - "${OMNIBRAIN_FRONTEND_PORT:-3000}:3000"
+      - "${OMNIBRAIN_API_PORT:-7432}:7432"
+    volumes:
+      # Persistent data: DB, memory, knowledge graph, auth tokens
+      - omnibrain-data:/data/omnibrain
+      # Mount .env for API keys (read-only)
+      - ./.env:/app/.env:ro
+    environment:
+      - OMNIBRAIN_DATA_DIR=/data/omnibrain
+      - OMNIBRAIN_API_HOST=0.0.0.0
+      - OMNIBRAIN_API_PORT=7432
+      - OMNIBRAIN_FRONTEND_PORT=3000
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:7432/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+
+  # ── Optional: Local LLM via Ollama ──
+  # Activate with: docker compose --profile local up
+  ollama:
+    image: ollama/ollama:latest
+    container_name: omnibrain-ollama
+    profiles:
+      - local
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    # GPU support (uncomment for NVIDIA GPU)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  omnibrain-data:
+    driver: local
+  ollama-models:
+    driver: local

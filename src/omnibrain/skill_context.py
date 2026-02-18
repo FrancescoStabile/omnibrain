@@ -220,7 +220,7 @@ class SkillContext:
 
         Returns the proposal ID.
         """
-        self._require("notify")
+        self._require("propose_action")
         if not self._db:
             return 0
         proposal_id = self._db.insert_proposal(
@@ -237,6 +237,7 @@ class SkillContext:
 
     async def get_proposal_status(self, proposal_id: int) -> str:
         """Check the status of a previously created proposal."""
+        self._require("notify")
         if not self._db:
             return "unknown"
         row = None
@@ -326,6 +327,7 @@ class SkillContext:
 
     @property
     def user_preferences(self) -> dict[str, Any]:
+        self._require("read_profile")
         if self._db:
             return self._db.get_all_preferences()
         return {}
@@ -342,6 +344,7 @@ class SkillContext:
 
     async def get_data(self, key: str, default: Any = None) -> Any:
         """Read from skill-local key-value store."""
+        self._require("skill_storage")
         if not self._db:
             return default
         return self._db.get_preference(
@@ -350,6 +353,7 @@ class SkillContext:
 
     async def set_data(self, key: str, value: Any) -> None:
         """Write to skill-local key-value store."""
+        self._require("skill_storage")
         if not self._db:
             return
         self._db.set_preference(
@@ -361,6 +365,7 @@ class SkillContext:
 
     async def delete_data(self, key: str) -> None:
         """Delete a key from skill-local storage."""
+        self._require("skill_storage")
         if not self._db:
             return
         try:
@@ -439,6 +444,7 @@ class SkillContext:
 
     async def emit_event(self, event_type: str, data: dict[str, Any]) -> None:
         """Emit an event for other Skills to listen to."""
+        self._require("notify")
         if self._event_bus is not None:
             await self._event_bus.emit(event_type, {
                 "skill": self.skill_name,

@@ -37,14 +37,53 @@ def register_chat_routes(app, server, verify_api_key) -> None:  # noqa: ANN001
             except Exception as e:
                 logger.warning(f"Failed to save user message: {e}")
 
+            # ── 1b. Prompt injection defense ──
+            sanitizer = getattr(server, "_sanitizer", None)
+            sanitized_message = body.message
+            if sanitizer and body.message.strip():
+                try:
+                    result = sanitizer.sanitize_message(body.message)
+                    if result.is_blocked:
+                        logger.warning(
+                            f"Prompt injection BLOCKED (score={result.threat_score:.2f}): "
+                            f"{result.reason}"
+                        )
+                        error_data = json.dumps({
+                            "type": "error",
+                            "content": (
+                                "⚠️ Your message was flagged as potentially unsafe and has been blocked. "
+                                "This is a security measure to protect your AI. "
+                                "Please rephrase your request."
+                            ),
+                            "threat_score": result.threat_score,
+                        })
+                        yield f"data: {error_data}\n\n"
+                        yield f"data: {json.dumps({'type': 'done', 'session_id': session_id})}\n\n"
+                        return
+                    if result.is_warned:
+                        logger.warning(
+                            f"Prompt injection WARNING (score={result.threat_score:.2f}): "
+                            f"{result.reason}"
+                        )
+                        sanitized_message = result.safe_text
+                except Exception as e:
+                    logger.debug(f"Sanitizer check failed (non-blocking): {e}")
+
             # ── 2. Gather memory context ──
             memory_context = ""
-            if server._memory and body.message.strip():
-                results = server._memory.search(body.message, max_results=5)
+            if server._memory and sanitized_message.strip():
+                results = server._memory.search(sanitized_message, max_results=5)
                 if results:
                     snippets = []
                     for doc in results:
                         snippet = doc.text[:300].strip()
+                        # Sanitize memory snippets — emails are an external attack vector
+                        if sanitizer:
+                            try:
+                                san_result = sanitizer.sanitize(snippet, source=doc.source_type or "memory")
+                                snippet = san_result.safe_text
+                            except Exception:
+                                pass
                         if doc.source:
                             snippet = f"[{doc.source_type or 'memory'}] {snippet}"
                         snippets.append(snippet)

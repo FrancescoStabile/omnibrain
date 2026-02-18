@@ -124,11 +124,27 @@ export interface SkillInfo {
   installed: boolean;
 }
 
+export interface MarketplaceSkill {
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  repo: string;
+  downloads: number;
+  stars: number;
+  verified: boolean;
+  icon: string;
+  category: string;
+  permissions: string[];
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp: string;
   actions?: ChatAction[];
+  references?: KnowledgeReference[];
+  suggested_followups?: string[];
 }
 
 export interface ChatAction {
@@ -151,6 +167,13 @@ export interface TimelineItem {
   title: string;
   timestamp: string;
   metadata: string;
+  // Detail fields (populated when available)
+  description?: string;
+  sender?: string;
+  location?: string;
+  attendees?: string[];
+  proposal_id?: number;
+  references?: KnowledgeReference[];
 }
 
 export interface KnowledgeReference {
@@ -224,9 +247,133 @@ export interface OnboardingResult {
   duration_ms: number;
 }
 
+export interface TransparencyCall {
+  id: string;
+  timestamp: string;
+  provider: string;
+  model: string;
+  source: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  duration_ms: number;
+  had_tools: boolean;
+  had_error: boolean;
+  system_prompt_hash: string;
+}
+
+export interface TransparencyStats {
+  total_calls: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost_usd: number;
+  by_provider: Record<string, { calls: number; cost: number }>;
+  by_source: Record<string, { calls: number; cost: number }>;
+}
+
+export interface TransparencyDailyEntry {
+  date: string;
+  calls: number;
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+// ── Brain Status ──
+
+export interface BrainStatus {
+  uptime_seconds: number;
+  emails_analyzed: number;
+  contacts_mapped: number;
+  patterns_detected: number;
+  memories_stored: number;
+  skills_active: number;
+  llm_provider: string;
+  month_cost_usd: number;
+  recent_insights: string[];
+  learning_progress: number;
+  google_connected: boolean;
+  stats: Record<string, number>;
+}
+
+// ── Knowledge Entities ──
+
+export interface KnowledgeEntity {
+  id: string;
+  name: string;
+  type: "person" | "company" | "topic" | "project";
+  email?: string;
+  organization?: string;
+  interaction_count: number;
+  last_seen?: string;
+  relationship?: string;
+}
+
+export interface KnowledgeEntitiesResponse {
+  entities: KnowledgeEntity[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+// ── Knowledge Graph ──
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  type: "person" | "topic" | "company";
+  val?: number;
+  organization?: string;
+  relationship?: string;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  type: string;
+}
+
+export interface KnowledgeGraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  node_count: number;
+  edge_count: number;
+}
+
+// ── Contact Detail ──
+
+export interface ContactDetail {
+  contact: Contact & { last_seen?: string };
+  emails: { count: number; recent: { id: string; subject: string; timestamp: string; snippet: string }[] };
+  meetings: { count: number; recent: { id: string; title: string; timestamp: string; attendee_count: number }[] };
+  topics: string[];
+  relationship_score: number;
+}
+
+// ── Demo Mode ──
+
+export interface DemoStatus {
+  active: boolean;
+  record_count: number;
+  contacts: number;
+  events: number;
+  proposals: number;
+  patterns: number;
+}
+
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Fetch wrapper with retry + timeout
 // ═══════════════════════════════════════════════════════════════════════════
+
+export type ErrorKind =
+  | "backend_down"
+  | "google_disconnected"
+  | "no_api_key"
+  | "rate_limited"
+  | "server_error"
+  | "not_found"
+  | "generic";
 
 export class ApiError extends Error {
   constructor(
@@ -236,6 +383,31 @@ export class ApiError extends Error {
   ) {
     super(message);
     this.name = "ApiError";
+  }
+
+  /** Classify this error for contextual recovery UI */
+  get kind(): ErrorKind {
+    // Network errors / timeout → backend is unreachable
+    if (this.status === 0) return "backend_down";
+    // Rate limiting
+    if (this.status === 429) return "rate_limited";
+    // OAuth / Google disconnected
+    if (
+      this.code === "GOOGLE_NOT_CONNECTED" ||
+      this.code === "OAUTH_REQUIRED" ||
+      (this.status === 403 && /oauth|google|token/i.test(this.message))
+    ) return "google_disconnected";
+    // Missing API key
+    if (
+      this.code === "NO_API_KEY" ||
+      this.code === "INVALID_API_KEY" ||
+      (this.status === 401 && /api.key/i.test(this.message))
+    ) return "no_api_key";
+    // Server errors
+    if (this.status >= 500) return "server_error";
+    // Not found
+    if (this.status === 404) return "not_found";
+    return "generic";
   }
 }
 
@@ -384,6 +556,20 @@ export const api = {
   getSkillRuntime: () =>
     request<{ skills: Record<string, { enabled: boolean; loaded: boolean }> }>("/skills/runtime"),
 
+  // ── Marketplace ──
+  browseMarketplace: (search = "", category = "") => {
+    const q = new URLSearchParams();
+    if (search) q.set("search", search);
+    if (category) q.set("category", category);
+    return request<{ skills: MarketplaceSkill[]; total: number }>(`/marketplace/browse?${q}`);
+  },
+
+  installFromMarketplace: (repo: string) =>
+    request<{ status: string; name: string; message: string }>("/marketplace/install", {
+      method: "POST",
+      body: JSON.stringify({ repo }),
+    }),
+
   // ── Settings ──
   getSettings: () => request<Settings>("/settings"),
 
@@ -462,7 +648,134 @@ export const api = {
       method: "POST",
       body: JSON.stringify(profile),
     }),
+
+  // ── Transparency ──
+  getTransparencyCalls: (params: { limit?: number; offset?: number; provider?: string; source?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.limit) q.set("limit", String(params.limit));
+    if (params.offset) q.set("offset", String(params.offset));
+    if (params.provider) q.set("provider", params.provider);
+    if (params.source) q.set("source", params.source);
+    return request<{ calls: TransparencyCall[]; limit: number; offset: number }>(`/transparency/calls?${q}`);
+  },
+
+  getTransparencyStats: (days = 30) =>
+    request<TransparencyStats>(`/transparency/stats?days=${days}`),
+
+  getTransparencyDaily: (days = 30) =>
+    request<{ days: number; data: TransparencyDailyEntry[] }>(`/transparency/daily?days=${days}`),
+
+  // ── Brain Status ──
+  getBrainStatus: () =>
+    request<BrainStatus>("/brain-status", {}, { silent: true }),
+
+  // ── Knowledge Entities + Graph ──
+  getKnowledgeEntities: (params: { type?: string; sort?: string; limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.type) q.set("type", params.type);
+    if (params.sort) q.set("sort", params.sort);
+    if (params.limit) q.set("limit", String(params.limit));
+    if (params.offset) q.set("offset", String(params.offset));
+    return request<KnowledgeEntitiesResponse>(`/knowledge/entities?${q}`);
+  },
+
+  getKnowledgeGraph: (limit = 100) =>
+    request<KnowledgeGraphData>(`/knowledge/graph?limit=${limit}`, {}, { silent: true }),
+
+  // ── Contact Detail ──
+  getContactDetail: (email: string) =>
+    request<ContactDetail>(`/contacts/${encodeURIComponent(email)}/detail`),
+
+  // ── Demo Mode ──
+  getDemoStatus: () =>
+    request<DemoStatus>("/data/demo/status", {}, { silent: true }),
+
+  activateDemo: () =>
+    request<{ activated: boolean; records_inserted: number }>("/data/demo/activate", { method: "POST" }),
+
+  deactivateDemo: () =>
+    request<{ deactivated: boolean; records_removed: number }>("/data/demo/deactivate", { method: "POST" }),
+
+  // ── Data export / wipe ──
+  exportDataUrl: () => `${BASE}/data/export`,  // Use directly in <a href> for streaming download
+
+  requestDataWipe: () =>
+    request<{ status: string; confirmation_token: string; message: string; expires_in: number }>("/data/wipe", {
+      method: "POST",
+    }),
+
+  confirmDataWipe: (confirmationToken: string) =>
+    request<{ status: string; message: string }>("/data/wipe", {
+      method: "DELETE",
+      body: JSON.stringify({ confirmation_token: confirmationToken }),
+    }),
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Onboarding SSE stream
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type OnboardingEvent =
+  | { type: "progress"; step: string; message: string; count?: number }
+  | { type: "insight"; icon: string; title: string; body: string; action?: string; action_type?: string; priority?: number }
+  | { type: "result" } & OnboardingResult
+  | { type: "error"; message: string };
+
+/**
+ * Stream onboarding analysis via SSE.
+ * Each event is yielded as it arrives — progress updates, then insight
+ * cards one by one, then the final OnboardingResult.
+ */
+export async function* streamOnboarding(): AsyncGenerator<OnboardingEvent> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60_000);
+
+  try {
+    const res = await fetch(`${BASE}/onboarding/analyze/stream`, {
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      throw new ApiError(res.status, "STREAM_ERROR", "Onboarding stream failed");
+    }
+
+    const reader = res.body?.getReader();
+    if (!reader) return;
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("data: ")) {
+          try {
+            yield JSON.parse(trimmed.slice(6));
+          } catch {
+            // skip malformed
+          }
+        }
+      }
+    }
+
+    if (buffer.trim().startsWith("data: ")) {
+      try {
+        yield JSON.parse(buffer.trim().slice(6));
+      } catch {
+        // skip malformed tail
+      }
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Chat streaming (SSE-like fetch with ReadableStream)

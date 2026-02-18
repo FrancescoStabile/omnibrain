@@ -151,8 +151,8 @@ async def extract_and_persist(
             # Strip markdown code fences
             lines = raw.split("\n")
             raw = "\n".join(
-                l for l in lines
-                if not l.strip().startswith("```")
+                line for line in lines
+                if not line.strip().startswith("```")
             )
 
         data = json.loads(raw)

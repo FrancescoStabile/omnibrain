@@ -216,7 +216,6 @@ class BriefingGenerator:
 
     async def _llm_format(self, data: BriefingData) -> str:
         """Use the LLM to generate a warm, narrative briefing."""
-        import asyncio
 
         user_name = ""
         try:
@@ -571,11 +570,10 @@ class BriefingGenerator:
                     if start_str:
                         try:
                             start_dt = datetime.fromisoformat(start_str)
-                            if start_dt > now:
-                                if next_meeting_time is None or start_dt < next_meeting_time:
-                                    next_meeting_time = start_dt
-                                    section.next_meeting = e.get("title", "")
-                                    section.next_meeting_time = time_display
+                            if start_dt > now and (next_meeting_time is None or start_dt < next_meeting_time):
+                                next_meeting_time = start_dt
+                                section.next_meeting = e.get("title", "")
+                                section.next_meeting_time = time_display
                         except (ValueError, TypeError):
                             pass
 

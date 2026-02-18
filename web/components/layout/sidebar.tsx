@@ -7,7 +7,7 @@
 
 "use client";
 
-import { useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   Home,
@@ -24,6 +24,9 @@ import {
   Clock,
   Users,
   Brain,
+  Shield,
+  BookOpen,
+  ExternalLink,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -37,6 +40,7 @@ const navItems = [
   { id: "contacts" as const, label: "Contacts", icon: Users },
   { id: "knowledge" as const, label: "Knowledge", icon: Brain },
   { id: "skills" as const, label: "Skills", icon: Puzzle },
+  { id: "transparency" as const, label: "Transparency", icon: Shield },
   { id: "settings" as const, label: "Settings", icon: Settings },
 ];
 
@@ -77,6 +81,7 @@ export function Sidebar() {
     contacts: "/contacts",
     knowledge: "/knowledge",
     skills: "/skills",
+    transparency: "/transparency",
     settings: "/settings",
   };
 
@@ -100,6 +105,49 @@ export function Sidebar() {
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
   }, [sidebarOpen, setSidebarOpen]);
+
+  // ── Swipe gesture for mobile drawer ──
+  const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+
+  const handleTouchStart = useCallback((e: TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+  }, []);
+
+  const handleTouchEnd = useCallback(
+    (e: TouchEvent) => {
+      if (touchStartX.current === null || touchStartY.current === null) return;
+      const dx = e.changedTouches[0].clientX - touchStartX.current;
+      const dy = e.changedTouches[0].clientY - touchStartY.current;
+      touchStartX.current = null;
+      touchStartY.current = null;
+
+      // Only trigger on mostly-horizontal swipes (> 60px, angle < 30°)
+      if (Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx) * 0.6) return;
+      // Only for mobile
+      if (typeof window !== "undefined" && window.innerWidth >= 640) return;
+
+      if (dx > 0 && !sidebarOpen) {
+        // Swipe right → open (only from left 40px edge)
+        const startX = e.changedTouches[0].clientX - dx;
+        if (startX < 40) setSidebarOpen(true);
+      } else if (dx < 0 && sidebarOpen) {
+        // Swipe left → close
+        setSidebarOpen(false);
+      }
+    },
+    [sidebarOpen, setSidebarOpen],
+  );
+
+  useEffect(() => {
+    document.addEventListener("touchstart", handleTouchStart, { passive: true });
+    document.addEventListener("touchend", handleTouchEnd, { passive: true });
+    return () => {
+      document.removeEventListener("touchstart", handleTouchStart);
+      document.removeEventListener("touchend", handleTouchEnd);
+    };
+  }, [handleTouchStart, handleTouchEnd]);
 
   return (
     <>
@@ -202,6 +250,25 @@ export function Sidebar() {
             );
           })}
         </nav>
+
+        {/* ── Manifesto link (external) ── */}
+        <div className="mt-auto px-2 pb-1">
+          <a
+            href="/manifesto"
+            target="_blank"
+            rel="noopener"
+            className={cn(
+              "flex items-center gap-3 px-3 py-2 rounded-[var(--radius-sm)] text-sm font-medium",
+              "text-[var(--text-tertiary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-secondary)] transition-colors",
+              !sidebarOpen && "sm:justify-center sm:px-0",
+            )}
+            title="Manifesto"
+          >
+            <BookOpen className="h-[18px] w-[18px] shrink-0" />
+            <span className={cn(!sidebarOpen && "sm:hidden")}>Manifesto</span>
+            {sidebarOpen && <ExternalLink className="h-3 w-3 ml-auto opacity-50" />}
+          </a>
+        </div>
 
         {/* ── Proactive alerts summary ── */}
         {pendingCount > 0 && (

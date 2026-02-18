@@ -19,13 +19,11 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from omnigent.agent import Agent
-from omnigent.reasoning_graph import ReasoningGraph
-from omnigent.registry import DomainRegistry
-
 from omnibrain.graph import OmniBrainGraph
 from omnibrain.models import Observation
 from omnibrain.profile import OmniBrainProfile
+from omnigent.agent import Agent
+from omnigent.registry import DomainRegistry
 
 logger = logging.getLogger("omnibrain.agent")
 

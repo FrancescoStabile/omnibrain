@@ -210,6 +210,7 @@ class Agent:
         approval_callback: Any | None = None,
         checkpoint_interval: int = 0,
         session_manager: Any | None = None,
+        chat_mode: bool = False,
     ):
         self.router = router or LLMRouter(primary=Provider.DEEPSEEK)
         self.tools = tools or ToolRegistry()
@@ -227,6 +228,9 @@ class Agent:
         # Checkpoint/replay: save state every N iterations (0 = disabled)
         self._checkpoint_interval = checkpoint_interval
         self._session_manager = session_manager
+
+        # Chat mode: stop after first text-only response (prevents 3x duplicate bug)
+        self._chat_mode = chat_mode
 
         # Always register create_finding and submit_analysis so LLM sees them
         if "create_finding" not in self.tools.tools:
@@ -501,7 +505,17 @@ class Agent:
         """Step 5: Check if agent should stop. Override for custom termination logic.
 
         Returns True if agent should terminate.
+
+        In chat_mode, always terminate after the FIRST text-only response to prevent
+        the duplicate response bug (3 iterations × 1 LLM call each = 3 responses shown).
         """
+        if self._chat_mode:
+            # Chat is conversational: one response per user message.
+            # Tool calls may still happen within the same turn, but once the
+            # agent produces a final text response with no pending tool calls,
+            # we're done.
+            return True
+
         done_indicators = self._get_done_indicators()
         text_lower = text_buffer.lower()
         is_done = any(indicator in text_lower for indicator in done_indicators)
@@ -564,8 +578,10 @@ class Agent:
         self.is_running = True
         self.state.add_message("user", user_input)
 
-        # Generate task plan if this is a new objective
-        if not self.state.plan.objective or self.state.plan.is_complete():
+        # Generate task plan if this is a new objective.
+        # Skip in chat_mode: plan generation adds ~2s latency and an extra LLM call
+        # that produces "investigation" framing unsuitable for conversational chat.
+        if not self._chat_mode and (not self.state.plan.objective or self.state.plan.is_complete()):
             try:
                 self.state.plan = await generate_plan_with_llm(
                     user_input, self.state.profile, self.router, plan_templates=self.registry.plan_templates

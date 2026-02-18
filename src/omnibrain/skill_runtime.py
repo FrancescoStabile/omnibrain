@@ -22,6 +22,7 @@ starts as a long-lived coroutine via ``runtime.run()``.
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -261,6 +262,8 @@ class SkillRuntime:
         config: Any = None,
         event_bus: EventBus | None = None,
         llm_router: Any = None,
+        sandbox_enabled: bool = False,
+        sandbox_timeout: int = 60,
     ) -> None:
         self._db = db
         self._memory = memory
@@ -269,6 +272,8 @@ class SkillRuntime:
         self._config = config
         self._event_bus = event_bus or EventBus()
         self._llm_router = llm_router
+        self._sandbox_enabled = sandbox_enabled
+        self._sandbox_timeout = sandbox_timeout
 
         self._skills: dict[str, SkillManifest] = {}  # name → manifest
         self._handlers_cache: dict[str, Any] = {}  # "name:handler_key" → fn
@@ -276,6 +281,9 @@ class SkillRuntime:
 
         # Schedule tracking: skill_name → {trigger_value: last_run_ts}
         self._schedule_last_run: dict[str, dict[str, float]] = {}
+
+        # Per-skill Python executable (venv-aware)
+        self._skill_python: dict[str, str] = {}  # skill_name → python path
 
     # ──────────────────────────────────────────────────────────
     # Discovery
@@ -301,6 +309,9 @@ class SkillRuntime:
                             f"Discovered Skill: {manifest.name} v{manifest.version} "
                             f"({len(manifest.triggers)} triggers)"
                         )
+                        # Provision per-skill venv if dependencies declared
+                        if manifest.dependencies:
+                            self._ensure_skill_venv(manifest)
 
         # Wire on_event triggers to the event bus
         for manifest in found:
@@ -380,7 +391,23 @@ class SkillRuntime:
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        """Resolve *handler_key*, create a ``SkillContext``, and call the handler."""
+        """Resolve *handler_key* and invoke — sandboxed or in-process."""
+        if self._sandbox_enabled:
+            return await self._invoke_handler_sandboxed(
+                manifest, handler_key, *args, **kwargs
+            )
+        return await self._invoke_handler_direct(
+            manifest, handler_key, *args, **kwargs
+        )
+
+    async def _invoke_handler_direct(
+        self,
+        manifest: SkillManifest,
+        handler_key: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """In-process handler invocation (--no-sandbox / dev mode)."""
         fn = self._resolve_handler(manifest, handler_key)
         if fn is None:
             return None
@@ -395,6 +422,64 @@ class SkillRuntime:
                 f"Skill '{manifest.name}' handler '{handler_key}' failed: {e}"
             )
             return None
+
+    async def _invoke_handler_sandboxed(
+        self,
+        manifest: SkillManifest,
+        handler_key: str,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Run handler in an isolated subprocess via JSON-RPC bridge."""
+        from omnibrain.skill_sandbox import run_handler_sandboxed
+
+        handler_relpath = manifest.handlers.get(handler_key)
+        if not handler_relpath:
+            return None
+
+        python_exec = self._skill_python.get(manifest.name)
+
+        try:
+            result = await run_handler_sandboxed(
+                skill_name=manifest.name,
+                skill_path=manifest.path,
+                handler_relpath=handler_relpath,
+                handler_key=handler_key,
+                permissions=set(manifest.permissions),
+                args_json=json.dumps(args, default=str),
+                kwargs_json=json.dumps(kwargs, default=str),
+                timeout=self._sandbox_timeout,
+                python_executable=python_exec,
+                db=self._db,
+                memory=self._memory,
+                knowledge_graph=self._kg,
+                approval_gate=self._approval,
+                config=self._config,
+                event_bus=self._event_bus,
+                llm_router=self._llm_router,
+            )
+            logger.info(
+                f"Skill '{manifest.name}' handler '{handler_key}' "
+                f"completed (sandboxed)"
+            )
+            return result
+        except Exception as e:
+            logger.error(
+                f"Skill '{manifest.name}' handler '{handler_key}' "
+                f"sandbox failed: {e}"
+            )
+            return None
+
+    # ──────────────────────────────────────────────────────────
+    # Skill venv management
+    # ──────────────────────────────────────────────────────────
+
+    def _ensure_skill_venv(self, manifest: SkillManifest) -> None:
+        """Create a per-skill venv if the skill declares dependencies."""
+        from omnibrain.skill_sandbox import ensure_skill_venv
+
+        python_path = ensure_skill_venv(manifest.path, manifest.dependencies)
+        self._skill_python[manifest.name] = python_path
 
     # ──────────────────────────────────────────────────────────
     # Public trigger APIs

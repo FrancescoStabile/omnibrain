@@ -16,9 +16,12 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -81,8 +84,6 @@ class OnboardingAnalyzer:
         the async API endpoint). Returns structured results for the
         frontend to animate through.
         """
-        import time
-
         t0 = time.monotonic()
 
         # ── Fetch Gmail data ──
@@ -160,7 +161,7 @@ class OnboardingAnalyzer:
             insights=sorted(insights, key=lambda c: -c.priority),
             user_email=user_email,
             user_name=user_name,
-            completed_at=datetime.now(timezone.utc).isoformat(),
+            completed_at=datetime.now(UTC).isoformat(),
             duration_ms=duration_ms,
             raw_emails=emails,
             raw_events=events,
@@ -175,6 +176,162 @@ class OnboardingAnalyzer:
             len(insights),
         )
         return result
+
+    async def analyze_streaming(self) -> AsyncIterator[dict[str, Any]]:
+        """Run analysis with SSE-compatible progress events.
+
+        Yields dicts suitable for JSON serialization:
+          {"type": "progress", "step": "emails", "message": "..."}
+          {"type": "progress", "step": "contacts", "count": 12, ...}
+          {"type": "insight", "icon": "...", "title": "...", "body": "...", ...}
+          {"type": "result", ...full OnboardingResult as dict...}
+
+        Email and calendar fetches run in parallel via asyncio.
+        """
+        t0 = time.monotonic()
+        loop = asyncio.get_running_loop()
+
+        yield {"type": "progress", "step": "start", "message": "Starting analysis..."}
+
+        # ── Parallel fetch: Gmail + Calendar ──
+        async def fetch_emails() -> tuple[list[Any], str]:
+            def _sync() -> tuple[list[Any], str]:
+                try:
+                    from omnibrain.integrations.gmail import GmailClient
+                    gmail = GmailClient(self._data_dir)
+                    if gmail.authenticate():
+                        msgs = gmail.fetch_recent(max_results=100, since_hours=168)
+                        return msgs, gmail.user_email
+                except Exception as e:
+                    logger.warning("Streaming onboarding: Gmail failed: %s", e)
+                return [], ""
+            return await loop.run_in_executor(None, _sync)
+
+        async def fetch_events() -> list[Any]:
+            def _sync() -> list[Any]:
+                try:
+                    from omnibrain.integrations.calendar import CalendarClient
+                    cal = CalendarClient(self._data_dir)
+                    if cal.authenticate():
+                        return cal.get_upcoming_events(days=7, max_results=50)
+                except Exception as e:
+                    logger.warning("Streaming onboarding: Calendar failed: %s", e)
+                return []
+            return await loop.run_in_executor(None, _sync)
+
+        yield {"type": "progress", "step": "emails", "message": "Reading your emails..."}
+
+        # Launch both in parallel
+        email_task = asyncio.create_task(fetch_emails())
+        calendar_task = asyncio.create_task(fetch_events())
+
+        emails, user_email = await email_task
+        email_count = len(emails)
+
+        yield {
+            "type": "progress",
+            "step": "emails",
+            "count": email_count,
+            "message": f"Found {email_count} emails from the last 7 days",
+        }
+
+        # ── Extract contacts ──
+        yield {"type": "progress", "step": "contacts", "message": "Mapping your contacts..."}
+
+        contacts: set[str] = set()
+        for em in emails:
+            if hasattr(em, "sender") and em.sender:
+                contacts.add(_extract_email(em.sender))
+            if hasattr(em, "recipients"):
+                for r in em.recipients:
+                    contacts.add(_extract_email(r))
+
+        events = await calendar_task
+        event_count = len(events)
+
+        yield {
+            "type": "progress",
+            "step": "calendar",
+            "count": event_count,
+            "message": f"Found {event_count} events this week",
+        }
+
+        # Add attendees as contacts
+        for ev in events:
+            if hasattr(ev, "attendees"):
+                for a in ev.attendees:
+                    contacts.add(_extract_email(a))
+
+        contacts.discard("")
+        contacts.discard(user_email)
+        contact_count = len(contacts)
+
+        yield {
+            "type": "progress",
+            "step": "contacts",
+            "count": contact_count,
+            "message": f"Mapped {contact_count} people in your network",
+        }
+
+        # ── Generate insights ──
+        yield {"type": "progress", "step": "insights", "message": "Generating insights..."}
+
+        user_name = _guess_name_from_email(user_email)
+        greeting = _build_greeting(user_name)
+        insights = _generate_insights(
+            emails=emails,
+            events=events,
+            contacts=contacts,
+            email_count=email_count,
+            event_count=event_count,
+        )
+        insights_sorted = sorted(insights, key=lambda c: -c.priority)
+
+        # Stream each insight card individually
+        for card in insights_sorted:
+            yield {
+                "type": "insight",
+                "icon": card.icon,
+                "title": card.title,
+                "body": card.body,
+                "action": card.action,
+                "action_type": card.action_type,
+                "priority": card.priority,
+            }
+            await asyncio.sleep(0.15)  # stagger for smooth frontend animation
+
+        duration_ms = int((time.monotonic() - t0) * 1000)
+
+        # ── Final result event ──
+        yield {
+            "type": "result",
+            "greeting": greeting,
+            "stats": {
+                "emails": email_count,
+                "contacts": contact_count,
+                "events": event_count,
+            },
+            "insights": [
+                {
+                    "icon": c.icon,
+                    "title": c.title,
+                    "body": c.body,
+                    "action": c.action,
+                    "action_type": c.action_type,
+                    "priority": c.priority,
+                }
+                for c in insights_sorted
+            ],
+            "user_email": user_email,
+            "user_name": user_name,
+            "completed_at": datetime.now(UTC).isoformat(),
+            "duration_ms": duration_ms,
+        }
+
+        logger.info(
+            "Streaming onboarding complete in %dms: %d emails, %d contacts, %d events, %d insights",
+            duration_ms, email_count, contact_count, event_count, len(insights_sorted),
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -222,10 +379,11 @@ def _generate_insights(
     email_count: int,
     event_count: int,
 ) -> list[InsightCard]:
-    """Generate 3-5 insight cards from the fetched data.
+    """Generate 3-7 insight cards from the fetched data.
 
     Each card uses emotive "WTF" micro-copy designed to make the user
-    feel the AI already knows them deeply.
+    feel the AI already knows them deeply. All analysis is local — zero
+    LLM calls for speed.
     """
     cards: list[InsightCard] = []
 
@@ -244,12 +402,31 @@ def _generate_insights(
                 icon="mail",
                 title=f"Did you know? {name} sent you {top_count} emails",
                 body=(
-                    f"That's your #1 correspondent this week. "
-                    f"I'll remember every conversation so you never lose context."
+                    "That's your #1 correspondent this week. "
+                    "I'll remember every conversation so you never lose context."
                 ),
                 action="Ask me what they said",
                 action_type="draft_email",
                 priority=3,
+            ))
+
+    # ── Unanswered emails > 48h ──
+    if emails:
+        unanswered = _detect_unanswered_emails(emails)
+        if unanswered:
+            count = len(unanswered)
+            oldest_sender = _extract_display_name(unanswered[0].get("sender", "someone"))
+            days = unanswered[0].get("days_ago", 2)
+            cards.append(InsightCard(
+                icon="alert",
+                title=f"{count} email{'s' if count > 1 else ''} waiting for your reply",
+                body=(
+                    f"{oldest_sender} wrote {days} days ago and you haven't replied yet. "
+                    f"Want me to draft a response?"
+                ),
+                action="See draft reply",
+                action_type="draft_email",
+                priority=6,
             ))
 
     # ── Upcoming meeting load ──
@@ -260,9 +437,13 @@ def _generate_insights(
         ]
         if today_events:
             first_title = today_events[0].title if hasattr(today_events[0], "title") else "meeting"
+            total_minutes = _sum_meeting_minutes(today_events)
+            hours = total_minutes // 60
+            mins = total_minutes % 60
+            time_str = f"{hours}h{mins:02d}m" if hours else f"{mins}m"
             cards.append(InsightCard(
                 icon="calendar",
-                title=f"Heads up — {len(today_events)} meeting{'s' if len(today_events) != 1 else ''} today",
+                title=f"{len(today_events)} meeting{'s' if len(today_events) != 1 else ''} today ({time_str})",
                 body=(
                     f"Your next is \"{first_title}\". "
                     f"I already have the context from last time — want a brief?"
@@ -284,6 +465,27 @@ def _generate_insights(
                 priority=2,
             ))
 
+    # ── Tomorrow's meeting density ──
+    if events:
+        tomorrow_events = [
+            e for e in events
+            if hasattr(e, "start_time") and _is_tomorrow(e.start_time)
+        ]
+        if len(tomorrow_events) >= 3:
+            total_minutes = _sum_meeting_minutes(tomorrow_events)
+            hours = total_minutes / 60
+            cards.append(InsightCard(
+                icon="calendar",
+                title=f"Tomorrow: {len(tomorrow_events)} meetings, {hours:.1f}h blocked",
+                body=(
+                    "Heads up — your tomorrow is packed. "
+                    "I'll prepare briefs for each one tonight."
+                ),
+                action="See tomorrow's brief",
+                action_type="view_event",
+                priority=4,
+            ))
+
     # ── Unread ratio ──
     if emails:
         unread = sum(1 for em in emails if not getattr(em, "is_read", True))
@@ -298,6 +500,24 @@ def _generate_insights(
                 action="Install Email Manager",
                 action_type="add_skill",
                 priority=4,
+            ))
+
+    # ── Subscription detection ──
+    if emails:
+        subscriptions = _detect_subscriptions(emails)
+        if subscriptions:
+            sub_names = ", ".join(s["name"] for s in subscriptions[:3])
+            total = len(subscriptions)
+            cards.append(InsightCard(
+                icon="trend",
+                title=f"I found {total} subscription{'s' if total > 1 else ''}: {sub_names}",
+                body=(
+                    "I can track these and alert you before they renew. "
+                    "No more surprise charges."
+                ),
+                action="Review subscriptions",
+                action_type="add_skill",
+                priority=2,
             ))
 
     # ── Network size ──
@@ -324,7 +544,7 @@ def _generate_insights(
             priority=0,
         ))
 
-    return cards[:5]
+    return cards[:7]
 
 
 def _extract_display_name(sender: str) -> str:
@@ -339,9 +559,159 @@ def _extract_display_name(sender: str) -> str:
 def _is_today(dt: Any) -> bool:
     """Check if a datetime is today (timezone-aware safe)."""
     try:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if hasattr(dt, "date"):
             return dt.date() == now.date()
     except Exception:
         pass
     return False
+
+
+def _is_tomorrow(dt: Any) -> bool:
+    """Check if a datetime is tomorrow."""
+    try:
+        from datetime import timedelta
+        tomorrow = datetime.now(UTC).date() + timedelta(days=1)
+        if hasattr(dt, "date"):
+            return dt.date() == tomorrow
+    except Exception:
+        pass
+    return False
+
+
+def _sum_meeting_minutes(events: list[Any]) -> int:
+    """Sum the total meeting duration in minutes."""
+    total = 0
+    for ev in events:
+        start = getattr(ev, "start_time", None) or getattr(ev, "start", None)
+        end = getattr(ev, "end_time", None) or getattr(ev, "end", None)
+        if start and end and hasattr(start, "timestamp") and hasattr(end, "timestamp"):
+            try:
+                delta = (end - start).total_seconds() / 60
+                total += max(0, int(delta))
+            except Exception:
+                total += 30  # default 30min
+        else:
+            total += 30
+    return total
+
+
+def _detect_unanswered_emails(emails: list[Any]) -> list[dict[str, Any]]:
+    """Detect emails that may need a reply (> 48h old, not from the user).
+
+    Returns list of dicts with sender and days_ago.
+    """
+    from datetime import timedelta
+
+    unanswered: list[dict[str, Any]] = []
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(hours=48)
+
+    # Track which senders we've already replied to
+    replied_to: set[str] = set()
+    sent_subjects: set[str] = set()
+
+    for em in emails:
+        if getattr(em, "is_sent", False) or getattr(em, "label_sent", False):
+            subject = (getattr(em, "subject", "") or "").lower().strip()
+            if subject.startswith("re:"):
+                sent_subjects.add(subject[3:].strip())
+            sender = _extract_email(getattr(em, "sender", ""))
+            replied_to.add(sender)
+
+    for em in emails:
+        if getattr(em, "is_sent", False) or getattr(em, "label_sent", False):
+            continue
+
+        sender = getattr(em, "sender", "")
+        sender_email = _extract_email(sender)
+        if sender_email in replied_to:
+            continue
+
+        # Check age
+        ts = getattr(em, "date", None) or getattr(em, "timestamp", None)
+        if ts and hasattr(ts, "timestamp"):
+            try:
+                if ts.replace(tzinfo=UTC if ts.tzinfo is None else ts.tzinfo) < cutoff:
+                    days_ago = (now - ts.replace(
+                        tzinfo=UTC if ts.tzinfo is None else ts.tzinfo
+                    )).days
+                    subject = (getattr(em, "subject", "") or "").lower().strip()
+                    if subject not in sent_subjects:
+                        unanswered.append({
+                            "sender": sender,
+                            "days_ago": max(days_ago, 2),
+                            "subject": getattr(em, "subject", ""),
+                        })
+            except Exception:
+                pass
+
+    # Deduplicate by sender, keep oldest
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for item in sorted(unanswered, key=lambda x: -x["days_ago"]):
+        key = _extract_email(item["sender"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+
+    return unique[:5]
+
+
+# Common subscription senders/domains
+_SUBSCRIPTION_INDICATORS = {
+    "netflix", "spotify", "amazon prime", "apple", "disney+",
+    "hulu", "adobe", "microsoft 365", "dropbox", "slack",
+    "notion", "figma", "canva", "grammarly", "duolingo",
+    "nytimes", "medium", "substack", "patreon",
+    "billing", "invoice", "subscription", "renewal",
+    "your payment", "receipt", "auto-renew",
+}
+
+
+def _detect_subscriptions(emails: list[Any]) -> list[dict[str, str]]:
+    """Detect subscription services from email subjects and senders.
+
+    Returns list of dicts with `name` key.
+    """
+    found: dict[str, str] = {}
+
+    for em in emails:
+        sender = (getattr(em, "sender", "") or "").lower()
+        subject = (getattr(em, "subject", "") or "").lower()
+        combined = sender + " " + subject
+
+        for indicator in _SUBSCRIPTION_INDICATORS:
+            if indicator in combined:
+                # Extract service name
+                name = _guess_service_name(sender, subject, indicator)
+                if name and name not in found:
+                    found[name] = indicator
+                    break
+
+    return [{"name": name} for name in sorted(found)][:10]
+
+
+def _guess_service_name(sender: str, subject: str, indicator: str) -> str:
+    """Guess a clean service name from email metadata."""
+    # Known services
+    known = {
+        "netflix": "Netflix", "spotify": "Spotify",
+        "amazon prime": "Amazon Prime", "apple": "Apple",
+        "disney+": "Disney+", "hulu": "Hulu",
+        "adobe": "Adobe", "microsoft 365": "Microsoft 365",
+        "dropbox": "Dropbox", "slack": "Slack",
+        "notion": "Notion", "figma": "Figma",
+        "canva": "Canva", "grammarly": "Grammarly",
+        "duolingo": "Duolingo", "medium": "Medium",
+    }
+    if indicator in known:
+        return known[indicator]
+
+    # Extract from sender domain
+    if "@" in sender:
+        domain = sender.split("@")[1].split(".")[0]
+        if len(domain) > 2:
+            return domain.capitalize()
+
+    return ""

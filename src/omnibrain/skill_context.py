@@ -18,10 +18,11 @@ Design:
 
 from __future__ import annotations
 
-import json
 import logging
+from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Any, AsyncIterator
+from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger("omnibrain.skill_context")
 
@@ -29,8 +30,12 @@ logger = logging.getLogger("omnibrain.skill_context")
 # ─── Permission Denied ───────────────────────────────────────────────────
 
 
-class PermissionDenied(Exception):
+class PermissionDeniedError(Exception):
     """Raised when a Skill calls an API it has no permission for."""
+
+
+# Backwards compatibility alias
+PermissionDenied = PermissionDeniedError
 
 
 # ─── Notification levels (re-exported for handler convenience) ───────────
@@ -96,9 +101,9 @@ class SkillContext:
     # ──────────────────────────────────────────────────────────
 
     def _require(self, permission: str) -> None:
-        """Raise ``PermissionDenied`` if the Skill lacks *permission*."""
+        """Raise ``PermissionDeniedError`` if the Skill lacks *permission*."""
         if permission not in self.permissions:
-            raise PermissionDenied(
+            raise PermissionDeniedError(
                 f"Skill '{self.skill_name}' lacks permission '{permission}'"
             )
 
@@ -382,7 +387,7 @@ class SkillContext:
         "calendar": "read_calendar",
     }
 
-    def _get_data_dir(self) -> "Path":
+    def _get_data_dir(self) -> Path:
         """Resolve data_dir from config or fall back to ~/.omnibrain."""
         from pathlib import Path
 
@@ -399,7 +404,7 @@ class SkillContext:
             ``"gmail"``    → ``GmailClient``    (requires ``google_gmail``)
             ``"calendar"`` → ``CalendarClient``  (requires ``read_calendar``)
 
-        Raises ``PermissionDenied`` if the Skill lacks the needed permission.
+        Raises ``PermissionDeniedError`` if the Skill lacks the needed permission.
         Returns ``None`` if the client cannot authenticate.
         """
         perm = self._INTEGRATION_PERMISSIONS.get(name)

@@ -24,6 +24,7 @@ import {
 import { api, type Settings } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { useNavigate } from "@/hooks/useNavigate";
+import { useToast } from "@/components/ui/toast";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,6 +53,7 @@ function ProfileTab() {
   const [name, setName] = useState("");
   const [timezone, setTimezone] = useState("");
   const [saved, setSaved] = useState(false);
+  const toast = useToast();
 
   useEffect(() => {
     api.getSettings().then((s) => {
@@ -64,8 +66,11 @@ function ProfileTab() {
     try {
       await api.updateSettings({ profile: { name, timezone, language: "en" } });
       setSaved(true);
+      toast.success("Settings saved");
       setTimeout(() => setSaved(false), 2000);
-    } catch { /* ignore */ }
+    } catch {
+      toast.error("Failed to save settings");
+    }
   };
 
   return (
@@ -160,21 +165,34 @@ function LLMTab() {
   const [showKeys, setShowKeys] = useState(false);
   const [stats, setStats] = useState<Record<string, number>>({});
   const [llmSettings, setLlmSettings] = useState<Settings["llm"] | null>(null);
-  const [loadError, setLoadError] = useState(false);
+  const [switching, setSwitching] = useState<string | null>(null);
+  const toast = useToast();
 
-  useEffect(() => {
+  const refresh = useCallback(async () => {
     api.getStats().then(setStats).catch(() => {});
-    api.getSettings()
-      .then((s) => setLlmSettings(s.llm))
-      .catch(() => setLoadError(true));
+    api.getSettings().then((s) => setLlmSettings(s.llm)).catch(() => {});
   }, []);
 
+  useEffect(() => { refresh(); }, [refresh]);
+
   const providers = [
-    { name: "DeepSeek", key: "DEEPSEEK_API_KEY", cost: "$0.14/M tokens", role: "Cheap tasks" },
-    { name: "Claude", key: "ANTHROPIC_API_KEY", cost: "$3.00/M tokens", role: "Smart tasks" },
-    { name: "OpenAI", key: "OPENAI_API_KEY", cost: "$2.50/M tokens", role: "Fallback" },
-    { name: "Ollama", key: "OLLAMA_HOST", cost: "Free (local)", role: "Privacy-sensitive" },
+    { id: "deepseek", name: "DeepSeek", cost: "$0.14/M tokens", role: "Cheap tasks — daily default" },
+    { id: "claude", name: "Claude", cost: "$3.00/M tokens", role: "Complex reasoning" },
+    { id: "openai", name: "OpenAI", cost: "$2.50/M tokens", role: "Fallback" },
+    { id: "local", name: "Ollama", cost: "Free (local)", role: "Privacy-first, no data leaves" },
   ];
+
+  const setPrimary = async (providerId: string) => {
+    setSwitching(providerId);
+    try {
+      await api.updateSettings({ llm: { primary_provider: providerId } });
+      await refresh();
+      toast.success(`Switched primary provider to ${providerId}`);
+    } catch {
+      toast.error("Failed to switch provider");
+    }
+    setSwitching(null);
+  };
 
   // Defensive: ensure numbers even if backend returns strings
   const totalCost = Number(llmSettings?.current_month_cost) || 0;
@@ -205,44 +223,55 @@ function LLMTab() {
       </Card>
 
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-[var(--text-primary)]">
-          LLM Providers
-        </h3>
+        <h3 className="text-sm font-medium text-[var(--text-primary)]">LLM Providers</h3>
         <Button variant="ghost" size="sm" onClick={() => setShowKeys(!showKeys)}>
           {showKeys ? <EyeOff className="h-3.5 w-3.5 mr-1" /> : <Eye className="h-3.5 w-3.5 mr-1" />}
-          {showKeys ? "Hide Keys" : "Show Keys"}
+          {showKeys ? "Hide" : "Show keys"}
         </Button>
       </div>
       <div className="space-y-2">
         {providers.map((p) => {
-          const isPrimary = llmSettings?.primary_provider?.toLowerCase().includes(p.name.toLowerCase());
+          const isPrimary = llmSettings?.primary_provider?.toLowerCase() === p.id;
           return (
-            <Card key={p.name} className="p-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div>
-                    <span className="font-medium text-sm text-[var(--text-primary)]">
-                      {p.name}
-                    </span>
-                    {isPrimary && (
-                      <Badge variant="success" className="ml-2 text-[10px]">PRIMARY</Badge>
-                    )}
-                    <span className="text-xs text-[var(--text-tertiary)] ml-2">
-                      {p.cost}
-                    </span>
-                    {showKeys && (
-                      <p className="text-xs text-[var(--text-tertiary)] mt-0.5 font-mono">
-                        {p.key}: ••••••••
-                      </p>
-                    )}
+            <Card key={p.id} className="p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-medium text-sm text-[var(--text-primary)]">{p.name}</span>
+                    {isPrimary && <Badge variant="success" className="text-[10px]">PRIMARY</Badge>}
+                    <span className="text-xs text-[var(--text-tertiary)]">{p.cost}</span>
                   </div>
+                  <p className="text-xs text-[var(--text-tertiary)] mt-0.5">{p.role}</p>
+                  {showKeys && p.id !== "local" && (
+                    <p className="text-xs text-[var(--text-tertiary)] mt-0.5 font-mono">
+                      {p.id.toUpperCase()}_API_KEY: ••••••••
+                    </p>
+                  )}
+                  {showKeys && p.id === "local" && (
+                    <p className="text-xs text-[var(--text-tertiary)] mt-0.5 font-mono">
+                      OLLAMA_BASE_URL / OLLAMA_MODEL (env)
+                    </p>
+                  )}
                 </div>
-                <Badge variant="default">{p.role}</Badge>
+                {!isPrimary && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setPrimary(p.id)}
+                    disabled={switching === p.id}
+                    className="shrink-0 text-xs"
+                  >
+                    {switching === p.id ? "Switching…" : "Set primary"}
+                  </Button>
+                )}
               </div>
             </Card>
           );
         })}
       </div>
+      <p className="text-xs text-[var(--text-tertiary)]">
+        Ollama runs locally — set OLLAMA_BASE_URL and OLLAMA_MODEL in your .env to configure it.
+      </p>
     </div>
   );
 }
@@ -255,11 +284,11 @@ function NotificationsTab() {
     critical: true,
   });
   const [saved, setSaved] = useState(false);
+  const toast = useToast();
 
   useEffect(() => {
     api.getSettings().then((s) => {
       const n = s.notifications || {};
-      // Build prefs from whatever shape comes back
       setPrefs({
         silent: n.silent !== false,
         fyi: n.fyi !== false,
@@ -275,9 +304,12 @@ function NotificationsTab() {
     try {
       await api.updateSettings({ notifications: updated });
       setSaved(true);
+      toast.success("Preferences saved");
       setTimeout(() => setSaved(false), 1500);
-    } catch { /* ignore */ }
-  }, [prefs]);
+    } catch {
+      toast.error("Failed to save preferences");
+    }
+  }, [prefs, toast]);
 
   const levels = [
     { key: "silent", label: "Silent", desc: "Log only — no pop-ups" },
@@ -319,36 +351,39 @@ function NotificationsTab() {
 }
 
 function DataTab() {
-  const [exporting, setExporting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [wipeToken, setWipeToken] = useState<string | null>(null);
+  const toast = useToast();
 
-  const handleExport = useCallback(async () => {
-    setExporting(true);
-    try {
-      const [settings, stats] = await Promise.all([
-        api.getSettings(),
-        api.getStats(),
-      ]);
-      const payload = { settings, stats, exported_at: new Date().toISOString() };
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `omnibrain-export-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch { /* ignore */ }
-    setExporting(false);
+  // Export: open the streaming backend endpoint directly — triggers browser download
+  const handleExport = useCallback(() => {
+    const url = api.exportDataUrl();
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `omnibrain-export-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
   }, []);
 
-  const handleDelete = useCallback(async () => {
+  // Step 1: request wipe — backend issues a confirmation token
+  const handleRequestWipe = useCallback(async () => {
     setDeleting(true);
     try {
-      // Delete all chat sessions
-      const { sessions } = await api.getChatSessions(1000);
-      await Promise.all(sessions.map((s) => api.deleteChatSession(s.session_id)));
-      // Reset local state
+      const { confirmation_token } = await api.requestDataWipe();
+      setWipeToken(confirmation_token);
+    } catch {
+      toast.error("Failed to initiate wipe — is the backend running?");
+    }
+    setDeleting(false);
+  }, [toast]);
+
+  // Step 2: confirm wipe with token
+  const handleConfirmWipe = useCallback(async () => {
+    if (!wipeToken) return;
+    setDeleting(true);
+    try {
+      await api.confirmDataWipe(wipeToken);
+      // Clear local store state
       useStore.setState({
         messages: [],
         chatSessions: [],
@@ -356,10 +391,15 @@ function DataTab() {
         proposals: [],
         briefingData: null,
       });
+      setWipeToken(null);
       setConfirmDelete(false);
-    } catch { /* ignore */ }
+      toast.success("All data permanently deleted.");
+    } catch {
+      toast.error("Wipe failed — token may have expired. Try again.");
+      setWipeToken(null);
+    }
     setDeleting(false);
-  }, []);
+  }, [wipeToken, toast]);
 
   return (
     <div className="space-y-4">
@@ -369,11 +409,12 @@ function DataTab() {
         </CardHeader>
         <CardBody>
           <p className="mb-3 text-sm text-[var(--text-secondary)]">
-            Download all your data as a JSON file. GDPR compliant.
+            Download a complete JSON archive of all your data — events, contacts, chat history,
+            memories, preferences. GDPR Article 20 compliant.
           </p>
-          <Button variant="secondary" size="md" onClick={handleExport} disabled={exporting}>
+          <Button variant="secondary" size="md" onClick={handleExport}>
             <Download className="h-4 w-4" />
-            {exporting ? "Exporting…" : "Export Data"}
+            Download Archive
           </Button>
         </CardBody>
       </Card>
@@ -382,24 +423,39 @@ function DataTab() {
           <CardTitle className="text-[var(--error)]">Danger Zone</CardTitle>
         </CardHeader>
         <CardBody>
-          {!confirmDelete ? (
+          {!confirmDelete && !wipeToken ? (
             <>
               <p className="mb-3 text-sm text-[var(--text-secondary)]">
-                Permanently delete all your data. This cannot be undone.
+                Permanently delete all your data. This cannot be undone. Your AI will forget everything.
               </p>
               <Button variant="danger" size="md" onClick={() => setConfirmDelete(true)}>
                 <Trash2 className="h-4 w-4" />
                 Delete Everything
               </Button>
             </>
+          ) : wipeToken ? (
+            <>
+              <p className="mb-3 text-sm text-[var(--error)] font-medium">
+                ⚠ Final confirmation required. This will permanently delete ALL data from the database,
+                memory store, and knowledge graph. This cannot be undone.
+              </p>
+              <div className="flex gap-2">
+                <Button variant="danger" size="md" onClick={handleConfirmWipe} disabled={deleting}>
+                  {deleting ? "Deleting…" : "Confirm — Delete Everything"}
+                </Button>
+                <Button variant="ghost" size="md" onClick={() => { setWipeToken(null); setConfirmDelete(false); }}>
+                  Cancel
+                </Button>
+              </div>
+            </>
           ) : (
             <>
               <p className="mb-3 text-sm text-[var(--error)] font-medium">
-                Are you sure? This will delete ALL chat history, sessions, and preferences.
+                Are you sure? A 60-second confirmation token will be issued.
               </p>
               <div className="flex gap-2">
-                <Button variant="danger" size="md" onClick={handleDelete} disabled={deleting}>
-                  {deleting ? "Deleting…" : "Yes, Delete Everything"}
+                <Button variant="danger" size="md" onClick={handleRequestWipe} disabled={deleting}>
+                  {deleting ? "Requesting…" : "Yes, Request Wipe"}
                 </Button>
                 <Button variant="ghost" size="md" onClick={() => setConfirmDelete(false)}>
                   Cancel
@@ -441,7 +497,7 @@ export function SettingsPage() {
           role="tablist"
           aria-label="Settings sections"
           aria-orientation="vertical"
-          className="flex sm:flex-col gap-1 sm:w-44 shrink-0"
+          className="flex sm:flex-col gap-1 sm:w-44 shrink-0 overflow-x-auto"
         >
           {tabs.map((tab) => {
             const Icon = tab.icon;

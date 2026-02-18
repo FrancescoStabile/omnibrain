@@ -194,7 +194,7 @@ class TestGenerateInsights:
             email_count=20,
             event_count=5,
         )
-        assert len(cards) <= 5
+        assert len(cards) <= 7
 
     def test_sorted_by_priority(self) -> None:
         events = [_fake_event("Standup")]

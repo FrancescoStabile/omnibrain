@@ -19,6 +19,7 @@ import { OnboardingPage } from "@/components/views/onboarding";
 import { TimelinePage } from "@/components/views/timeline";
 import { ContactsPage } from "@/components/views/contacts";
 import { KnowledgePage } from "@/components/views/knowledge";
+import { TransparencyPage } from "@/components/views/transparency";
 import { api, ApiError, setApiErrorHandler } from "@/lib/api";
 import { useStore, type View } from "@/lib/store";
 import { ToastProvider, useToast } from "@/components/ui/toast";
@@ -37,6 +38,7 @@ const views: Record<string, React.FC> = {
   skills: SkillsPage,
   settings: SettingsPage,
   onboarding: OnboardingPage,
+  transparency: TransparencyPage,
 };
 
 interface AppShellProps {
@@ -69,14 +71,26 @@ function ToastBridge() {
   useEffect(() => {
     setApiErrorHandler((err: ApiError) => {
       if (!navigator.onLine) return; // Suppress individual errors when offline
-      if (err.status === 0) {
-        toast.error(err.message || "Network error — is the backend running?", 6000);
-      } else if (err.status >= 500) {
-        toast.error(`Server error: ${err.message}`, 5000);
-      } else if (err.status === 429) {
-        toast.warning("Too many requests — slow down a bit.", 4000);
+      switch (err.kind) {
+        case "backend_down":
+          toast.error("Backend not reachable — is OmniBrain running?", 6000);
+          break;
+        case "google_disconnected":
+          toast.warning("Google account not connected. Go to Settings to connect.", 5000);
+          break;
+        case "no_api_key":
+          toast.warning("No API key configured. Add one in Settings → LLM.", 5000);
+          break;
+        case "rate_limited":
+          toast.warning("Too many requests — slow down a bit.", 4000);
+          break;
+        case "server_error":
+          toast.error(`Server error: ${err.message}`, 5000);
+          break;
+        // 4xx / not_found / generic — typically handled by calling component
+        default:
+          break;
       }
-      // 4xx are typically handled by the calling component
     });
     return () => setApiErrorHandler(null);
   }, [toast]);

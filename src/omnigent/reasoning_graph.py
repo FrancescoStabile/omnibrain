@@ -234,7 +234,7 @@ class ReasoningGraph:
 
             # 3. Label exact match
             if not node:
-                for nid, n in self.nodes.items():
+                for _nid, n in self.nodes.items():
                     if n.label.lower() == cap_lower:
                         node = n
                         break

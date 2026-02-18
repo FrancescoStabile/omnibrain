@@ -249,20 +249,21 @@ def register_data_routes(app: Any, server: Any, verify_api_key: Any) -> None:
         tables_wiped = []
 
         try:
-            # Wipe all data tables
+            # Wipe all data tables via the DB's own connection context manager
             wipe_tables = [
                 "events", "contacts", "proposals", "observations",
                 "chat_messages", "chat_sessions", "briefings", "preferences",
                 "installed_skills", "skill_data",
             ]
-            for table in wipe_tables:
-                try:
-                    db._conn.execute(f"DELETE FROM {table}")  # noqa: S608
-                    tables_wiped.append(table)
-                except Exception as e:
-                    logger.warning(f"Wipe table '{table}' failed: {e}")
-
-            db._conn.commit()
+            import sqlite3 as _sqlite3
+            with _sqlite3.connect(str(db.db_path)) as _conn:
+                for table in wipe_tables:
+                    try:
+                        _conn.execute(f"DELETE FROM {table}")  # noqa: S608
+                        tables_wiped.append(table)
+                    except Exception as e:
+                        logger.warning(f"Wipe table '{table}' failed: {e}")
+                _conn.commit()
 
             # Clear memory store if available
             memory = getattr(server, "_memory", None)
@@ -291,6 +292,40 @@ def register_data_routes(app: Any, server: Any, verify_api_key: Any) -> None:
 
         except Exception as e:
             logger.error(f"Data wipe failed: {e}")
-            raise HTTPException(status_code=500, detail=f"Wipe failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Wipe failed: {e}") from e
+
+    # ── Demo Mode routes ──
+
+    @router.get("/demo/status")
+    async def demo_status(token: str = Depends(verify_api_key)) -> dict[str, Any]:
+        """Return current demo mode status."""
+        try:
+            from omnibrain.demo_data import DemoDataManager
+            mgr = DemoDataManager(db=server._db, memory=getattr(server, "_memory", None))
+            return mgr.get_status()
+        except Exception as e:
+            return {"active": False, "error": str(e)}
+
+    @router.post("/demo/activate")
+    async def demo_activate(token: str = Depends(verify_api_key)) -> dict[str, Any]:
+        """Activate demo mode with sample data."""
+        try:
+            from omnibrain.demo_data import DemoDataManager
+            mgr = DemoDataManager(db=server._db, memory=getattr(server, "_memory", None))
+            count = mgr.activate()
+            return {"activated": True, "records_inserted": count}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.post("/demo/deactivate")
+    async def demo_deactivate(token: str = Depends(verify_api_key)) -> dict[str, Any]:
+        """Deactivate demo mode and remove sample data."""
+        try:
+            from omnibrain.demo_data import DemoDataManager
+            mgr = DemoDataManager(db=server._db, memory=getattr(server, "_memory", None))
+            count = mgr.deactivate()
+            return {"deactivated": True, "records_removed": count}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     app.include_router(router)

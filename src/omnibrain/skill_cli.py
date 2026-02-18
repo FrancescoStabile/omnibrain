@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-import textwrap
 from pathlib import Path
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -303,13 +302,13 @@ def init_skill(
     # Determine handlers
     handler_entries.append('  schedule: "handlers/poll.py"')
     handler_entries.append('  on_ask: "handlers/ask.py"')
-    handler_table_rows.append(f"| poll.py | schedule | Periodic task |")
-    handler_table_rows.append(f"| ask.py | on_ask | User question |")
+    handler_table_rows.append("| poll.py | schedule | Periodic task |")
+    handler_table_rows.append("| ask.py | on_ask | User question |")
 
     if with_event_handler:
         trigger_lines.append(f'  - on_event: "{slug}_event"')
         handler_entries.append('  on_event: "handlers/event.py"')
-        handler_table_rows.append(f"| event.py | on_event | System event |")
+        handler_table_rows.append("| event.py | on_event | System event |")
 
     # Determine permissions
     perms = permissions or ["read_memory", "notify", "llm_access"]

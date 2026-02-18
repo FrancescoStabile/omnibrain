@@ -145,11 +145,10 @@ class TaskPlan:
         if not current:
             return
         for step in current.steps:
-            if step.status == PhaseStatus.PENDING and step.tool_hint:
-                if step.tool_hint == tool_name:
-                    step.status = PhaseStatus.COMPLETE
-                    step.result_summary = result_summary[:200]
-                    return
+            if step.status == PhaseStatus.PENDING and step.tool_hint and step.tool_hint == tool_name:
+                step.status = PhaseStatus.COMPLETE
+                step.result_summary = result_summary[:200]
+                return
 
     def record_failure(self, tool_name: str) -> None:
         """Record a tool failure in the current phase for replanning detection."""
@@ -517,7 +516,7 @@ async def generate_plan_with_llm(
             if json_match:
                 data = json.loads(json_match.group())
             else:
-                raise ValueError(f"No JSON object found in LLM response: {text[:200]}")
+                raise ValueError(f"No JSON object found in LLM response: {text[:200]}") from None
 
         plan = TaskPlan(objective=objective)
         for phase_data in data.get("phases", []):

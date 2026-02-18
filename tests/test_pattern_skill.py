@@ -26,7 +26,7 @@ SKILL_PATH = Path(__file__).parent.parent / "skills" / "pattern-detector"
 
 
 def _make_ctx(permissions: set[str] | None = None):
-    perms = permissions or {"read_memory", "write_memory", "notify", "llm_access"}
+    perms = permissions or {"read_memory", "write_memory", "notify", "llm_access", "read_profile"}
     db = MagicMock()
     db.get_all_preferences.return_value = {}
     config = MagicMock(user_name="Test", timezone="UTC")

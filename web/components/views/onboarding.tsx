@@ -14,8 +14,8 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Share2, Download, Puzzle, ArrowRight } from "lucide-react";
-import { api, streamChat } from "@/lib/api";
-import type { InsightCard as InsightCardType, OnboardingResult } from "@/lib/api";
+import { api, streamChat, streamOnboarding } from "@/lib/api";
+import type { InsightCard as InsightCardType, OnboardingEvent, OnboardingResult } from "@/lib/api";
 import { useStore } from "@/lib/store";
 import { useNavigate } from "@/hooks/useNavigate";
 import { cn } from "@/lib/utils";
@@ -260,10 +260,10 @@ function ConnectStep({ onConnected, onSkip }: { onConnected: () => void; onSkip:
 // ═══════════════════════════════════════════════════════════════════════════
 
 const ANALYSIS_PHASES = [
-  { label: "Reading your emails", icon: "📧", duration: 2500 },
-  { label: "Learning your contacts", icon: "👥", duration: 2000 },
-  { label: "Understanding your schedule", icon: "📅", duration: 2000 },
-  { label: "Generating insights", icon: "✨", duration: 1500 },
+  { label: "Reading your emails", icon: "📧", step: "emails" },
+  { label: "Mapping your contacts", icon: "👥", step: "contacts" },
+  { label: "Understanding your schedule", icon: "📅", step: "calendar" },
+  { label: "Generating insights", icon: "✨", step: "insights" },
 ] as const;
 
 function AnalyzingStep({
@@ -273,75 +273,110 @@ function AnalyzingStep({
 }) {
   const [phaseIndex, setPhaseIndex] = useState(0);
   const [progress, setProgress] = useState(0);
+  const [statusMessage, setStatusMessage] = useState("Starting analysis...");
+  const [streamedInsights, setStreamedInsights] = useState<InsightCardType[]>([]);
   const apiCalled = useRef(false);
   const resultRef = useRef<OnboardingResult | null>(null);
 
-  // Call the backend analysis once
+  // Advance phase based on SSE step name
+  const advancePhase = useCallback((step: string) => {
+    const idx = ANALYSIS_PHASES.findIndex((p) => p.step === step);
+    if (idx >= 0) {
+      setPhaseIndex(idx);
+      setProgress(((idx + 1) / ANALYSIS_PHASES.length) * 85);
+    }
+  }, []);
+
+  // SSE-driven analysis
   useEffect(() => {
     if (apiCalled.current) return;
     apiCalled.current = true;
 
-    api
-      .analyzeOnboarding()
-      .then((r) => {
-        resultRef.current = r;
-      })
-      .catch((e) => {
-        console.error("Onboarding analysis failed:", e);
-        // Still complete with empty result so the user isn't stuck
-        resultRef.current = {
-          greeting: "Welcome!",
-          stats: { emails: 0, contacts: 0, events: 0 },
-          insights: [],
-          user_email: "",
-          user_name: "",
-          completed_at: new Date().toISOString(),
-          duration_ms: 0,
-        };
-      });
-  }, []);
+    let cancelled = false;
 
-  // Animate through analysis phases
-  useEffect(() => {
-    const totalDuration = ANALYSIS_PHASES.reduce((s, p) => s + p.duration, 0);
-    let elapsed = 0;
-    let currentPhase = 0;
+    (async () => {
+      try {
+        for await (const event of streamOnboarding()) {
+          if (cancelled) return;
 
-    const interval = setInterval(() => {
-      elapsed += 100;
-      const pct = Math.min((elapsed / totalDuration) * 100, 100);
-      setProgress(pct);
-
-      // Advance phase
-      let phaseTime = 0;
-      for (let i = 0; i < ANALYSIS_PHASES.length; i++) {
-        phaseTime += ANALYSIS_PHASES[i].duration;
-        if (elapsed < phaseTime) {
-          currentPhase = i;
-          break;
-        }
-        if (i === ANALYSIS_PHASES.length - 1) {
-          currentPhase = i;
-        }
-      }
-      setPhaseIndex(currentPhase);
-
-      if (elapsed >= totalDuration) {
-        clearInterval(interval);
-        // Wait for API result (may already be done)
-        const waitForResult = () => {
-          if (resultRef.current) {
-            onComplete(resultRef.current);
-          } else {
-            setTimeout(waitForResult, 200);
+          if (event.type === "progress") {
+            advancePhase(event.step);
+            setStatusMessage(event.message);
+          } else if (event.type === "insight") {
+            setStreamedInsights((prev) => [
+              ...prev,
+              {
+                icon: event.icon,
+                title: event.title,
+                body: event.body,
+                action: event.action || "",
+                action_type: event.action_type || "",
+                priority: event.priority || 0,
+              },
+            ]);
+          } else if (event.type === "result") {
+            setProgress(100);
+            // Build OnboardingResult from the SSE result event
+            const result: OnboardingResult = {
+              greeting: (event as any).greeting || "Welcome!",
+              stats: (event as any).stats || { emails: 0, contacts: 0, events: 0 },
+              insights: ((event as any).insights || []).map((c: any) => ({
+                icon: c.icon,
+                title: c.title,
+                body: c.body,
+                action: c.action || "",
+                action_type: c.action_type || "",
+                priority: c.priority || 0,
+              })),
+              user_email: (event as any).user_email || "",
+              user_name: (event as any).user_name || "",
+              completed_at: (event as any).completed_at || new Date().toISOString(),
+              duration_ms: (event as any).duration_ms || 0,
+            };
+            resultRef.current = result;
+            // Brief pause so the user sees "100%" before transition
+            setTimeout(() => {
+              if (!cancelled) onComplete(result);
+            }, 500);
+          } else if (event.type === "error") {
+            console.error("Onboarding stream error:", event.message);
+            // Fall back to POST endpoint
+            const fallback = await api.analyzeOnboarding();
+            if (!cancelled) onComplete(fallback);
           }
-        };
-        waitForResult();
-      }
-    }, 100);
+        }
 
-    return () => clearInterval(interval);
-  }, [onComplete]);
+        // If stream ended without result event, try POST fallback
+        if (!resultRef.current && !cancelled) {
+          const fallback = await api.analyzeOnboarding();
+          if (!cancelled) onComplete(fallback);
+        }
+      } catch (err) {
+        console.error("Onboarding stream failed:", err);
+        // Fall back gracefully
+        try {
+          const fallback = await api.analyzeOnboarding();
+          if (!cancelled) onComplete(fallback);
+        } catch {
+          if (!cancelled) {
+            onComplete({
+              greeting: "Welcome!",
+              stats: { emails: 0, contacts: 0, events: 0 },
+              insights: [],
+              user_email: "",
+              user_name: "",
+              completed_at: new Date().toISOString(),
+              duration_ms: 0,
+            });
+          }
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [onComplete, advancePhase]);
 
   const phase = ANALYSIS_PHASES[phaseIndex];
 
@@ -352,25 +387,43 @@ function AnalyzingStep({
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full bg-[var(--brand-primary)] opacity-[0.04] blur-[100px] animate-pulse" />
       </div>
 
-      <div className="relative z-10 flex flex-col items-center">
+      <div className="relative z-10 flex flex-col items-center w-full max-w-md">
         {/* Phase icon */}
         <div className="text-5xl mb-8 animate-bounce">{phase.icon}</div>
 
-        <p className="text-lg text-[var(--text-secondary)] mb-8 min-h-[2em] transition-all duration-500">
+        <p className="text-lg text-[var(--text-secondary)] mb-2 min-h-[2em] transition-all duration-500">
           {phase.label}...
+        </p>
+
+        {/* Real status message from backend */}
+        <p className="text-xs text-[var(--text-tertiary)] mb-6 min-h-[1.5em] transition-all duration-300">
+          {statusMessage}
         </p>
 
         {/* Progress bar */}
         <div className="w-64 h-1.5 bg-[var(--border-default)] rounded-full overflow-hidden mb-4">
           <div
-            className="h-full bg-gradient-to-r from-[var(--brand-primary)] to-[var(--accent-orange)] rounded-full transition-all duration-200"
+            className="h-full bg-gradient-to-r from-[var(--brand-primary)] to-[var(--accent-orange)] rounded-full transition-all duration-500 ease-out"
             style={{ width: `${progress}%` }}
           />
         </div>
 
-        <p className="text-xs text-[var(--text-tertiary)]">
-          This takes about 10 seconds
-        </p>
+        {/* Streamed insight preview cards */}
+        {streamedInsights.length > 0 && (
+          <div className="w-full mt-6 space-y-2">
+            {streamedInsights.slice(-3).map((card, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-2 p-2 rounded-lg bg-[var(--bg-secondary)]/60 border border-[var(--border-default)]/40 animate-in fade-in slide-in-from-bottom-2 duration-300 text-left"
+              >
+                <span className="text-sm">
+                  {{ mail: "📧", calendar: "📅", inbox: "📥", users: "👥", sparkles: "✨", alert: "⚠️", trend: "📈" }[card.icon] || "💡"}
+                </span>
+                <span className="text-xs text-[var(--text-secondary)] truncate flex-1">{card.title}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -462,6 +515,7 @@ function SkillRecommendations({ result, onInstall }: { result: OnboardingResult;
 /** Generate a shareable card image from the reveal stats */
 function ShareButton({ result }: { result: OnboardingResult }) {
   const [shared, setShared] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   const handleShare = useCallback(async () => {
     // Build a share text
@@ -492,14 +546,46 @@ function ShareButton({ result }: { result: OnboardingResult }) {
     } catch { /* ignore */ }
   }, [result]);
 
+  const handleDownloadCard = useCallback(async () => {
+    setDownloading(true);
+    try {
+      const name = result.user_name || "";
+      const res = await fetch(
+        `/api/v1/share-card?user_name=${encodeURIComponent(name)}`,
+      );
+      if (!res.ok) throw new Error("Failed to generate share card");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "omnibrain-share.png";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("Share card download failed:", e);
+    } finally {
+      setDownloading(false);
+    }
+  }, [result]);
+
   return (
-    <button
-      onClick={handleShare}
-      className="flex items-center gap-2 text-xs text-[var(--text-tertiary)] hover:text-[var(--brand-primary)] transition-colors"
-    >
-      <Share2 className="h-3.5 w-3.5" />
-      {shared ? "Copied! 🎉" : "Share your results"}
-    </button>
+    <div className="flex items-center gap-4">
+      <button
+        onClick={handleShare}
+        className="flex items-center gap-2 text-xs text-[var(--text-tertiary)] hover:text-[var(--brand-primary)] transition-colors"
+      >
+        <Share2 className="h-3.5 w-3.5" />
+        {shared ? "Copied! 🎉" : "Share your results"}
+      </button>
+      <button
+        onClick={handleDownloadCard}
+        disabled={downloading}
+        className="flex items-center gap-2 text-xs text-[var(--text-tertiary)] hover:text-[var(--brand-primary)] transition-colors disabled:opacity-40"
+      >
+        <Download className="h-3.5 w-3.5" />
+        {downloading ? "Generating..." : "Download card"}
+      </button>
+    </div>
   );
 }
 

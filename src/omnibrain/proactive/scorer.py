@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from omnibrain.models import (
-    NotificationLevel as NL,
+    NotificationLevel,
     Priority,
     Urgency,
 )
@@ -261,14 +261,14 @@ class PriorityScorer:
         if signals.force_critical:
             return PriorityScore(
                 score=1.0,
-                notification_level=NL.CRITICAL.value,
+                notification_level=NotificationLevel.CRITICAL.value,
                 signals=signals,
                 reason="Force-critical override",
             )
         if signals.force_silent:
             return PriorityScore(
                 score=0.0,
-                notification_level=NL.SILENT.value,
+                notification_level=NotificationLevel.SILENT.value,
                 signals=signals,
                 reason="Force-silent override",
             )
@@ -470,12 +470,12 @@ class PriorityScorer:
     def _select_level(self, score: float) -> str:
         """Map a score to a notification level."""
         if score >= self._critical:
-            return NL.CRITICAL.value
+            return NotificationLevel.CRITICAL.value
         if score >= self._important:
-            return NL.IMPORTANT.value
+            return NotificationLevel.IMPORTANT.value
         if score >= self._fyi:
-            return NL.FYI.value
-        return NL.SILENT.value
+            return NotificationLevel.FYI.value
+        return NotificationLevel.SILENT.value
 
     def _build_reason(
         self, signals: ScoringSignals, breakdown: ScoreBreakdown, final: float
@@ -639,9 +639,9 @@ class NotificationLevelSelector:
             level = _downgrade_level(level)
 
         # Rate limit CRITICAL notifications
-        if level == NL.CRITICAL.value:
+        if level == NotificationLevel.CRITICAL.value:
             if self._is_critical_rate_limited():
-                level = NL.IMPORTANT.value
+                level = NotificationLevel.IMPORTANT.value
             else:
                 self._critical_history.append(datetime.now())
 
@@ -682,10 +682,10 @@ def _in_quiet_hours(hour: int, window: tuple[int, int]) -> bool:
 
 def _downgrade_level(level: str) -> str:
     """Downgrade a notification level by one step."""
-    if level == NL.CRITICAL.value:
-        return NL.IMPORTANT.value
-    if level == NL.IMPORTANT.value:
-        return NL.FYI.value
+    if level == NotificationLevel.CRITICAL.value:
+        return NotificationLevel.IMPORTANT.value
+    if level == NotificationLevel.IMPORTANT.value:
+        return NotificationLevel.FYI.value
     return level  # FYI and SILENT stay
 
 

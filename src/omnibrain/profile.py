@@ -17,15 +17,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from omnigent.domain_profile import DomainProfile, Hypothesis
-
 from omnibrain.models import (
     ActionProposal,
     CalendarEvent,
     ContactInfo,
     Observation,
 )
-
+from omnigent.domain_profile import DomainProfile, Hypothesis
 
 # ═══════════════════════════════════════════════════════════════════════════
 # EmailStats — communication summary
@@ -182,7 +180,7 @@ class OmniBrainProfile(DomainProfile):
 
         # Email stats
         if self.email_stats.total_today > 0:
-            lines.append(f"\n### Email Summary")
+            lines.append("\n### Email Summary")
             lines.append(f"- Today: {self.email_stats.total_today} emails ({self.email_stats.unread_total} unread)")
 
         # Pending actions

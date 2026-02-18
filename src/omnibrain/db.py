@@ -21,17 +21,16 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 from omnibrain.models import (
-    ActionProposal,
     Briefing,
     ContactInfo,
     Observation,
-    ProposalStatus,
 )
 
 logger = logging.getLogger("omnibrain.db")

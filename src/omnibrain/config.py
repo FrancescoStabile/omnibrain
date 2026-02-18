@@ -57,6 +57,9 @@ class OmniBrainConfig:
         # API server
         "OMNIBRAIN_API_HOST": "127.0.0.1",
         "OMNIBRAIN_API_PORT": 7432,
+        # Ollama (local inference)
+        "OLLAMA_BASE_URL": "http://localhost:11434/v1",
+        "OLLAMA_MODEL": "qwen2.5-coder:3b-instruct",
         # Optional
         "OMNIBRAIN_GITHUB_TOKEN": "",
         "OMNIBRAIN_ENCRYPTION_KEY": "",
@@ -174,6 +177,14 @@ class OmniBrainConfig:
         return str(self._data.get("TELEGRAM_CHAT_ID", ""))
 
     @property
+    def ollama_base_url(self) -> str:
+        return str(self._data.get("OLLAMA_BASE_URL", "http://localhost:11434/v1"))
+
+    @property
+    def ollama_model(self) -> str:
+        return str(self._data.get("OLLAMA_MODEL", "qwen2.5-coder:3b-instruct"))
+
+    @property
     def github_token(self) -> str:
         return str(self._data.get("OMNIBRAIN_GITHUB_TOKEN", ""))
 
@@ -186,11 +197,12 @@ class OmniBrainConfig:
         self._data[key] = value
 
     def has_api_key(self) -> bool:
-        """Check if at least one LLM API key is set."""
+        """Check if at least one LLM provider is configured (key-based or local Ollama)."""
         return bool(
             self.deepseek_api_key
             or self.anthropic_api_key
             or self.openai_api_key
+            or self.ollama_base_url  # Ollama needs no key
         )
 
     def has_telegram(self) -> bool:
@@ -324,10 +336,10 @@ def interactive_setup() -> OmniBrainConfig:
                 f.write(f'{k}="{v}"\n')
         os.chmod(env_path, 0o600)
 
-    console.print(f"\n[bold green]✓ Setup complete![/]")
+    console.print("\n[bold green]✓ Setup complete![/]")
     console.print(f"  Config: {config.data_dir / 'config.yaml'}")
     if secrets:
         console.print(f"  Secrets: {env_path} (chmod 600)")
-    console.print(f"\n  Start OmniBrain: [bold cyan]omnibrain start[/]\n")
+    console.print("\n  Start OmniBrain: [bold cyan]omnibrain start[/]\n")
 
     return config

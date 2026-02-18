@@ -324,8 +324,8 @@ def _cmd_fetch_emails(args: argparse.Namespace) -> None:
 
     from omnibrain.config import OmniBrainConfig
     from omnibrain.db import OmniBrainDB
-    from omnibrain.tools.email_tools import fetch_emails, store_emails_in_db
     from omnibrain.integrations.gmail import GmailClient
+    from omnibrain.tools.email_tools import fetch_emails, store_emails_in_db
 
     console = Console()
     config = OmniBrainConfig()

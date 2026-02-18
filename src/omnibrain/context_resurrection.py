@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -198,7 +197,7 @@ class ContextTracker:
 
         event_id = self._db.insert_event(
             source=f"project:{project}",
-            event_type=f"project_activity",
+            event_type="project_activity",
             title=f"{action}: {detail}" if detail else action,
             content=json.dumps(activity.to_dict()),
             metadata={

@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from omnibrain.skill_context import PermissionDenied, SkillContext
+from omnibrain.skill_context import PermissionDeniedError, SkillContext
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -75,12 +75,12 @@ class TestGetIntegration:
 
     def test_gmail_needs_google_gmail_permission(self):
         ctx = _make_ctx(permissions={"read_memory"})
-        with pytest.raises(PermissionDenied, match="google_gmail"):
+        with pytest.raises(PermissionDeniedError, match="google_gmail"):
             ctx.get_integration("gmail")
 
     def test_calendar_needs_read_calendar_permission(self):
         ctx = _make_ctx(permissions={"read_memory"})
-        with pytest.raises(PermissionDenied, match="read_calendar"):
+        with pytest.raises(PermissionDeniedError, match="read_calendar"):
             ctx.get_integration("calendar")
 
     @patch("omnibrain.integrations.gmail.GmailClient")

@@ -56,24 +56,20 @@ import secrets
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
 
 from omnibrain.db import OmniBrainDB
 from omnibrain.memory import MemoryManager
 from omnibrain.skill_context import EventBus
 from omnibrain.skill_runtime import SkillRuntime
-
-from omnigent.router import LLMRouter, Provider, StreamChunk
+from omnigent.router import LLMRouter, Provider
 
 logger = logging.getLogger("omnibrain.api")
 
 # Lazy import FastAPI — allows using formatters/helpers without the server
 _fastapi_available = False
 try:
-    from fastapi import Depends, FastAPI, HTTPException, Query, Response, Security, WebSocket, WebSocketDisconnect
-    from fastapi.responses import RedirectResponse, StreamingResponse
+    from fastapi import Depends, FastAPI, HTTPException, Query, Security, WebSocket, WebSocketDisconnect
     from fastapi.security import APIKeyHeader
-    from pydantic import BaseModel
 
     _fastapi_available = True
 except ImportError:
@@ -86,6 +82,28 @@ except ImportError:
 
 if _fastapi_available:
     from omnibrain.interfaces.api_models import *  # noqa: F403
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Error code mapping
+# ═══════════════════════════════════════════════════════════════════════════
+
+_STATUS_CODES: dict[int, str] = {
+    400: "BAD_REQUEST",
+    401: "UNAUTHORIZED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    409: "CONFLICT",
+    422: "VALIDATION_ERROR",
+    429: "RATE_LIMITED",
+    500: "INTERNAL_ERROR",
+    503: "SERVICE_UNAVAILABLE",
+}
+
+
+def _status_to_code(status: int) -> str:
+    """Convert HTTP status to a machine-readable error code."""
+    return _STATUS_CODES.get(status, f"HTTP_{status}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -182,6 +200,19 @@ class OmniBrainAPIServer:
 
         self._register_routes()
 
+        # ── Structured error responses ──
+        # Ensures all HTTPExceptions return { error: { code, message } }
+        # for consistent frontend classification via ApiError.kind
+        from fastapi.responses import JSONResponse
+
+        @self.app.exception_handler(HTTPException)
+        async def structured_error_handler(request: Any, exc: HTTPException) -> JSONResponse:
+            if isinstance(exc.detail, dict) and "code" in exc.detail:
+                body = {"error": exc.detail}
+            else:
+                body = {"error": {"code": _status_to_code(exc.status_code), "message": str(exc.detail)}}
+            return JSONResponse(status_code=exc.status_code, content=body)
+
     def _load_system_prompt(self) -> str:
         """Load the system prompt from prompts/system.md."""
         prompt_file = Path(__file__).parent.parent / "prompts" / "system.md"
@@ -238,7 +269,10 @@ class OmniBrainAPIServer:
 
         async def verify_api_key(api_key: str | None = Security(api_key_header)) -> str:
             if self._auth_token and (not api_key or not self._verify_token(api_key)):
-                raise HTTPException(status_code=401, detail="Invalid or missing API key")
+                raise HTTPException(
+                    status_code=401,
+                    detail={"code": "INVALID_API_KEY", "message": "Invalid or missing API key"},
+                )
             return api_key or ""
 
         # ── GET /api/v1/health (no auth — for health checks, load balancers, run.sh) ──
@@ -306,7 +340,7 @@ class OmniBrainAPIServer:
                     actions_proposed=data.actions_proposed,
                 )
             except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
+                raise HTTPException(status_code=500, detail=str(e)) from e
 
         # ── GET /api/v1/briefing/data — Structured briefing ──
 
@@ -373,7 +407,7 @@ class OmniBrainAPIServer:
                 )
             except Exception as e:
                 logger.error("briefing/data error: %s", e)
-                raise HTTPException(status_code=500, detail=str(e))
+                raise HTTPException(status_code=500, detail=str(e)) from e
 
         # ── GET /api/v1/proposals ──
 
@@ -513,6 +547,206 @@ class OmniBrainAPIServer:
                 )
                 for c in contacts
             ]
+
+        # ── GET /api/v1/contacts/{email}/detail ──
+
+        @app.get("/api/v1/contacts/{email}/detail")
+        async def get_contact_detail(
+            email: str,
+            token: str = Depends(verify_api_key),
+        ) -> dict[str, Any]:
+            """Return rich contact profile: stats, timeline, topics, relationship score."""
+            from urllib.parse import unquote
+            email = unquote(email)
+
+            contact_rows = self._db.get_contacts(limit=1000)
+            contact = next(
+                (c for c in contact_rows if (c.email if hasattr(c, "email") else c.get("email", "")) == email),
+                None,
+            )
+            if not contact:
+                raise HTTPException(status_code=404, detail=f"Contact {email!r} not found")
+
+            if hasattr(contact, "email"):
+                contact_dict = {
+                    "email": contact.email,
+                    "name": contact.name,
+                    "relationship": contact.relationship,
+                    "organization": contact.organization,
+                    "interaction_count": contact.interaction_count,
+                }
+            else:
+                contact_dict = dict(contact)
+
+            # Recent events involving this contact
+            recent_emails: list[dict] = []
+            recent_meetings: list[dict] = []
+            total_emails = 0
+            total_meetings = 0
+            try:
+                all_events = self._db.get_events(limit=500)
+                for ev in all_events:
+                    meta_str = ev.get("metadata") or "{}"
+                    try:
+                        import json as _json
+                        meta = _json.loads(meta_str) if isinstance(meta_str, str) else meta_str
+                    except Exception:
+                        meta = {}
+
+                    src = ev.get("source", "")
+                    if "gmail" in src or "email" in src:
+                        from_addr = meta.get("from", "") or ""
+                        to_addrs = meta.get("to", []) or []
+                        if isinstance(to_addrs, str):
+                            to_addrs = [to_addrs]
+                        if email in from_addr or any(email in a for a in to_addrs):
+                            total_emails += 1
+                            if len(recent_emails) < 5:
+                                recent_emails.append({
+                                    "id": str(ev.get("id", "")),
+                                    "subject": ev.get("title", ""),
+                                    "timestamp": ev.get("timestamp", ""),
+                                    "snippet": meta.get("snippet", "")[:200],
+                                })
+                    elif "calendar" in src:
+                        attendees = meta.get("attendees", []) or []
+                        if any(email in str(a) for a in attendees):
+                            total_meetings += 1
+                            if len(recent_meetings) < 5:
+                                recent_meetings.append({
+                                    "id": str(ev.get("id", "")),
+                                    "title": ev.get("title", ""),
+                                    "timestamp": ev.get("timestamp", ""),
+                                    "attendee_count": len(attendees),
+                                })
+            except Exception:
+                pass
+
+            # Topics discussed with this contact
+            topics: list[str] = []
+            try:
+                observations = self._db.get_observations(days=180)
+                for obs in observations:
+                    related = obs.get("related_contact") or obs.get("contact") or ""
+                    if email in related:
+                        desc = obs.get("description", "")
+                        if desc and desc not in topics:
+                            topics.append(desc[:60])
+                        if len(topics) >= 10:
+                            break
+            except Exception:
+                pass
+
+            # Relationship score from PreferenceModel if available
+            relationship_score = 0.0
+            try:
+                pref = getattr(self, "_preference_model", None)
+                if pref and hasattr(pref, "relationship_strength"):
+                    relationship_score = float(pref.relationship_strength(email))
+            except Exception:
+                pass
+
+            return {
+                "contact": contact_dict,
+                "emails": {
+                    "count": total_emails,
+                    "recent": recent_emails,
+                },
+                "meetings": {
+                    "count": total_meetings,
+                    "recent": recent_meetings,
+                },
+                "topics": topics,
+                "relationship_score": relationship_score,
+            }
+
+        # ── GET /api/v1/brain-status ──
+
+        @app.get("/api/v1/brain-status")
+        async def brain_status(token: str = Depends(verify_api_key)) -> dict[str, Any]:
+            """Rich status summary: uptime, data counts, LLM activity, learning progress."""
+            import time as _time
+
+            db = self._db
+            stats = db.get_stats()
+            uptime = (datetime.now() - self._start_time).total_seconds()
+
+            # LLM provider + month cost from transparency
+            llm_provider = "unknown"
+            month_cost = 0.0
+            recent_insights: list[str] = []
+            try:
+                if self._router:
+                    llm_provider = str(getattr(self._router, "primary", "unknown"))
+                    if hasattr(llm_provider, "value"):
+                        llm_provider = llm_provider.value  # type: ignore[union-attr]
+            except Exception:
+                pass
+            try:
+                tlog = getattr(self, "_transparency_logger", None)
+                if tlog:
+                    t_stats = tlog.get_stats(days=30)
+                    month_cost = float(t_stats.total_cost)
+            except Exception:
+                pass
+
+            # Learning progress: heuristic based on events + contacts + observations
+            events_count = stats.get("events", 0)
+            contacts_count = stats.get("contacts", 0)
+            observations_count = stats.get("observations", 0)
+            memories_count = stats.get("memories", 0) if "memories" in stats else (
+                self._memory.count() if self._memory and hasattr(self._memory, "count") else 0
+            )
+
+            # Progress toward "fully trained" — arbitrary milestones
+            target = 500  # events
+            learning_progress = min(1.0, events_count / target) if events_count else 0.0
+
+            # Recent insights from observations
+            try:
+                obs = db.get_observations(days=7)
+                for o in obs[:3]:
+                    desc = o.get("description", "")
+                    if desc:
+                        recent_insights.append(desc[:100])
+            except Exception:
+                pass
+
+            # Skills active count
+            skills_active = 0
+            try:
+                sr = getattr(self, "_skill_runtime", None)
+                if sr:
+                    if hasattr(sr, "_loaded_skills"):
+                        skills_active = sum(1 for s in sr._loaded_skills.values() if s)
+                    else:
+                        skills_active = stats.get("installed_skills", 0)
+            except Exception:
+                skills_active = stats.get("installed_skills", 0)
+
+            # Google connected?
+            google_connected = False
+            try:
+                token_file = self._data_dir / "google_token.json"
+                vault_file = self._data_dir / "secure_vault.enc"
+                google_connected = token_file.exists() or vault_file.exists()
+            except Exception:
+                pass
+
+            return {
+                "uptime_seconds": round(uptime, 0),
+                "emails_analyzed": stats.get("events", 0),
+                "contacts_mapped": contacts_count,
+                "patterns_detected": observations_count,
+                "memories_stored": memories_count,
+                "skills_active": skills_active,
+                "llm_provider": llm_provider,
+                "month_cost_usd": round(month_cost, 4),
+                "recent_insights": recent_insights,
+                "learning_progress": round(learning_progress, 2),
+                "google_connected": google_connected,
+                "stats": stats,
+            }
 
         # ── GET /api/v1/stats ──
 
@@ -881,9 +1115,9 @@ class OmniBrainAPIServer:
 
         # ── Extracted route modules ──
         from omnibrain.interfaces.routes.chat import register_chat_routes
+        from omnibrain.interfaces.routes.knowledge import register_knowledge_routes
         from omnibrain.interfaces.routes.oauth import register_oauth_routes
         from omnibrain.interfaces.routes.onboarding import register_onboarding_routes
-        from omnibrain.interfaces.routes.knowledge import register_knowledge_routes
         from omnibrain.interfaces.routes.patterns import register_patterns_routes
 
         register_chat_routes(app, self, verify_api_key)
@@ -894,6 +1128,18 @@ class OmniBrainAPIServer:
 
         from omnibrain.interfaces.routes.data import register_data_routes
         register_data_routes(app, self, verify_api_key)
+
+        from omnibrain.interfaces.routes.inspection import register_inspection_routes
+        register_inspection_routes(app, self, verify_api_key)
+
+        from omnibrain.interfaces.routes.transparency import register_transparency_routes
+        register_transparency_routes(app, self, verify_api_key)
+
+        from omnibrain.interfaces.routes.share_card import register_share_card_routes
+        register_share_card_routes(app, self, verify_api_key)
+
+        from omnibrain.interfaces.routes.marketplace import register_marketplace_routes
+        register_marketplace_routes(app, self, verify_api_key)
 
         # ══════════════════════════════════════════════════════════════════
         # WebSocket feed for real-time events
@@ -925,6 +1171,48 @@ class OmniBrainAPIServer:
                 pass
             finally:
                 self._ws_clients.discard(ws)
+
+
+def wire_event_bus_to_ws(
+    server: "OmniBrainAPIServer",
+    event_bus: "EventBus",
+) -> None:
+    """Bridge all major EventBus topics to connected WebSocket clients.
+
+    Call this after creating an OmniBrainAPIServer in daemon mode so that
+    real-time events reach the frontend through the /ws endpoint.
+
+    Each event is forwarded as::
+
+        {"topic": "<full.event.type>", "data": {...}, "timestamp": "<iso>"}
+
+    and broadcast using the top-level topic key so clients can subscribe
+    by category (e.g. "proposal", "notification").
+    """
+    _ws_bridge_topics = [
+        "notification",
+        "proposal",
+        "skill",
+        "pattern",
+        "system",
+        "email",
+        "calendar",
+    ]
+
+    async def _bridge(event_type: str, data: dict) -> None:
+        payload = {
+            "topic": event_type,
+            "data": data,
+            "timestamp": datetime.now().isoformat(),
+        }
+        top = event_type.split(".")[0] if "." in event_type else event_type
+        await server.broadcast(top, payload)
+
+    for topic in _ws_bridge_topics:
+        event_bus.subscribe(topic, _bridge)
+        event_bus.subscribe(f"{topic}.*", _bridge)
+
+    logger.info("EventBus → WebSocket bridge wired (%d topics)", len(_ws_bridge_topics))
 
 
 def create_api_server(
@@ -1118,6 +1406,15 @@ def create_api_server(
     server._knowledge_graph = knowledge_graph
     server._sanitizer = sanitizer
     server._approval_gate = approval_gate
+
+    # ── Wire AgentChatBridge (Phase 2) ──
+    try:
+        from omnibrain.interfaces.agent_chat_bridge import AgentChatBridge
+        server._agent_bridge = AgentChatBridge(server)
+        logger.info("AgentChatBridge initialized — chat will use ReAct agent loop")
+    except Exception as e:
+        server._agent_bridge = None
+        logger.warning(f"AgentChatBridge init failed (chat will use legacy streaming): {e}")
 
     # ── Wire EventBus → WebSocket broadcast (multi-topic) ──
     # Bridge all major event topics to connected WebSocket clients.

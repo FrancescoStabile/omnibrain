@@ -15,7 +15,7 @@ Architecture:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -111,7 +111,7 @@ class CalendarClient:
         if not self.is_authenticated:
             raise CalendarAuthError("Not authenticated.")
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         end_of_day = start_of_day + timedelta(days=1)
 
@@ -133,7 +133,7 @@ class CalendarClient:
         if not self.is_authenticated:
             raise CalendarAuthError("Not authenticated.")
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         future = now + timedelta(days=days)
 
         return self._fetch_events(
@@ -185,7 +185,7 @@ class CalendarClient:
         if not self.is_authenticated:
             raise CalendarAuthError("Not authenticated.")
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         time_min = now - timedelta(days=days_back)
         time_max = now + timedelta(days=days_forward)
 
@@ -443,7 +443,7 @@ def _parse_event_time(time_data: dict[str, str]) -> datetime | None:
     elif "date" in time_data:
         try:
             return datetime.strptime(time_data["date"], "%Y-%m-%d").replace(
-                tzinfo=timezone.utc
+                tzinfo=UTC
             )
         except ValueError:
             return None

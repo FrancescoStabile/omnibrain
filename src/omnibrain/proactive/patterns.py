@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -40,6 +41,39 @@ from omnibrain.db import OmniBrainDB
 from omnibrain.models import Observation
 
 logger = logging.getLogger("omnibrain.proactive.patterns")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Pattern Type Constants
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Base pattern types (existing)
+BASE_PATTERN_TYPES = [
+    "time_pattern",
+    "communication_pattern",
+    "recurring_search",
+    "action_sequence",
+    "email_routing",
+    "calendar_habit",
+]
+
+# Temporal pattern types (FASE 3 — deep learning)
+TEMPORAL_PATTERNS = [
+    "weekly_search",        # "Every Monday searches for 'standup notes'"
+    "daily_routine",        # "Checks email at 9:00, reviews calendar at 9:15"
+    "response_window",      # "Always responds to Marco within 2h"
+    "meeting_prep",         # "Creates notes 30min before client meetings"
+]
+
+# Behavioral pattern types (FASE 3 — deep learning)
+BEHAVIORAL_PATTERNS = [
+    "email_triage",         # "Archives all newsletters, reads all from inner_circle"
+    "subscription_usage",   # "Netflix used 0 times in 47 days"
+    "commitment_tracking",  # "Promised Marco pricing by Friday, hasn't done it"
+    "delegation_pattern",   # "Always forwards design tasks to Luca"
+]
+
+ALL_PATTERN_TYPES = BASE_PATTERN_TYPES + TEMPORAL_PATTERNS + BEHAVIORAL_PATTERNS
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -303,16 +337,149 @@ class PatternDetector:
         }
 
     def weekly_analysis(self) -> dict[str, Any]:
-        """Run weekly pattern analysis (called by ProactiveEngine)."""
+        """Run weekly pattern analysis (called by ProactiveEngine).
+
+        Includes both standard detection and deep temporal analysis.
+        """
         patterns = self.detect()
+        temporal = self.detect_temporal_patterns()
+        patterns.extend(temporal)
+        self._detected_patterns = patterns
         proposals = self.propose_automations()
 
         return {
             "patterns_detected": len(patterns),
+            "temporal_patterns": len(temporal),
             "automations_proposed": len(proposals),
             "top_patterns": [p.to_dict() for p in patterns[:5]],
             "proposals": [p.to_dict() for p in proposals],
         }
+
+    # ──────────────────────────────────────────────────────────
+    # Deep Temporal Pattern Detection (FASE 3)
+    # ──────────────────────────────────────────────────────────
+
+    def detect_temporal_patterns(self) -> list[DetectedPattern]:
+        """Detect temporal patterns using hour-of-day and day-of-week clustering.
+
+        Algorithm:
+        1. Group observations by pattern_type + description similarity
+        2. Extract timestamps
+        3. Cluster on (hour_of_day, day_of_week) space
+        4. If cluster stddev < 1 hour and count >= 5 → confirmed pattern
+        """
+        observations = self._db.get_observations(
+            days=self._analysis_days,
+            min_confidence=0.0,
+        )
+        if not observations:
+            return []
+
+        temporal_patterns: list[DetectedPattern] = []
+
+        # Group by normalized description
+        groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for obs in observations:
+            key = _normalize(obs.get("description", ""))
+            groups[key].append(obs)
+
+        for key, group in groups.items():
+            if len(group) < 3:
+                continue
+
+            # Extract timestamps
+            timestamps = []
+            for obs in group:
+                ts_str = obs.get("last_seen") or obs.get("timestamp", "")
+                if ts_str:
+                    try:
+                        timestamps.append(datetime.fromisoformat(ts_str))
+                    except (ValueError, TypeError):
+                        pass
+
+            if len(timestamps) < 3:
+                continue
+
+            # Day-of-week clustering
+            dow_pattern = _detect_day_of_week_pattern(timestamps)
+            if dow_pattern:
+                day_name, count, stddev = dow_pattern
+                temporal_patterns.append(DetectedPattern(
+                    pattern_type="weekly_search",
+                    description=f"Every {day_name}: {group[0].get('description', key)}",
+                    occurrences=count,
+                    avg_confidence=0.8,
+                    first_seen=min(timestamps),
+                    last_seen=max(timestamps),
+                    observation_ids=[o.get("id", 0) for o in group],
+                ))
+
+            # Time-of-day clustering
+            tod_pattern = _detect_time_of_day_pattern(timestamps)
+            if tod_pattern:
+                hour, count, stddev = tod_pattern
+                temporal_patterns.append(DetectedPattern(
+                    pattern_type="daily_routine",
+                    description=f"Daily at ~{hour}:00: {group[0].get('description', key)}",
+                    occurrences=count,
+                    avg_confidence=min(0.95, 0.6 + (count * 0.05)),
+                    first_seen=min(timestamps),
+                    last_seen=max(timestamps),
+                    observation_ids=[o.get("id", 0) for o in group],
+                ))
+
+        logger.info(f"Detected {len(temporal_patterns)} temporal patterns")
+        return temporal_patterns
+
+    def detect_response_windows(self) -> list[DetectedPattern]:
+        """Detect response window patterns from communication observations.
+
+        Looks for consistent reply-time windows per contact.
+        """
+        observations = self._db.get_observations(
+            days=self._analysis_days,
+            min_confidence=0.0,
+        )
+        if not observations:
+            return []
+
+        # Filter communication patterns with timing data
+        comm_obs = [
+            o for o in observations
+            if o.get("pattern_type") == "communication_pattern"
+        ]
+
+        # Group by contact (extracted from description)
+        by_contact: dict[str, list[float]] = defaultdict(list)
+        for obs in comm_obs:
+            evidence = obs.get("evidence", "")
+            try:
+                ctx = json.loads(evidence) if evidence else {}
+            except json.JSONDecodeError:
+                ctx = {}
+            contact = ctx.get("recipient") or ctx.get("sender", "")
+            reply_hours = ctx.get("reply_hours")
+            if contact and reply_hours is not None:
+                by_contact[contact].append(float(reply_hours))
+
+        patterns: list[DetectedPattern] = []
+        for contact, reply_times in by_contact.items():
+            if len(reply_times) < 3:
+                continue
+            avg = sum(reply_times) / len(reply_times)
+            stddev = math.sqrt(sum((t - avg) ** 2 for t in reply_times) / len(reply_times))
+
+            if stddev < 2.0:  # Consistent within 2 hours
+                patterns.append(DetectedPattern(
+                    pattern_type="response_window",
+                    description=f"Responds to {contact} within ~{avg:.1f}h (±{stddev:.1f}h)",
+                    occurrences=len(reply_times),
+                    avg_confidence=min(0.95, 0.6 + len(reply_times) * 0.05),
+                    first_seen=datetime.now() - timedelta(days=self._analysis_days),
+                    last_seen=datetime.now(),
+                ))
+
+        return patterns
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -483,4 +650,138 @@ def _build_automation_proposal(pattern: DetectedPattern) -> AutomationProposal |
             action_spec={"pattern_description": desc},
         )
 
+    # ── Temporal pattern types (FASE 3) ──
+
+    if ptype == "weekly_search":
+        return AutomationProposal(
+            pattern=pattern,
+            action_type="weekly_scheduled_search",
+            title=f"Weekly search: {desc[:60]}",
+            description=f"Run this search automatically every week (seen {pattern.occurrences}x)",
+            trigger="weekly_schedule",
+            action_spec={"pattern_description": desc},
+        )
+
+    if ptype == "daily_routine":
+        return AutomationProposal(
+            pattern=pattern,
+            action_type="daily_automation",
+            title=f"Daily routine: {desc[:60]}",
+            description=f"Automate this daily task (seen {pattern.occurrences}x)",
+            trigger="daily_schedule",
+            action_spec={"pattern_description": desc},
+        )
+
+    if ptype == "response_window":
+        return AutomationProposal(
+            pattern=pattern,
+            action_type="response_reminder",
+            title=f"Response alert: {desc[:60]}",
+            description=f"Alert when response is overdue ({pattern.occurrences}x observed)",
+            trigger="on_email_received",
+            action_spec={"pattern_description": desc},
+        )
+
+    if ptype == "meeting_prep":
+        return AutomationProposal(
+            pattern=pattern,
+            action_type="meeting_prep_automation",
+            title=f"Meeting prep: {desc[:60]}",
+            description=f"Auto-create meeting prep (seen {pattern.occurrences}x)",
+            trigger="before_calendar_event",
+            action_spec={"pattern_description": desc},
+        )
+
+    if ptype == "commitment_tracking":
+        return AutomationProposal(
+            pattern=pattern,
+            action_type="commitment_reminder",
+            title=f"Commitment: {desc[:60]}",
+            description="Remind about unfulfilled commitment",
+            trigger="scheduled",
+            action_spec={"pattern_description": desc},
+        )
+
+    if ptype == "delegation_pattern":
+        return AutomationProposal(
+            pattern=pattern,
+            action_type="auto_delegate",
+            title=f"Delegate: {desc[:60]}",
+            description=f"Auto-suggest delegation (seen {pattern.occurrences}x)",
+            trigger="on_task_created",
+            action_spec={"pattern_description": desc},
+        )
+
     return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Temporal Analysis Helpers
+# ═══════════════════════════════════════════════════════════════════════════
+
+_DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def _detect_day_of_week_pattern(
+    timestamps: list[datetime],
+    min_count: int = 3,
+    max_stddev_hours: float = 4.0,
+) -> tuple[str, int, float] | None:
+    """Detect if timestamps cluster on a specific day of the week.
+
+    Returns (day_name, count_on_that_day, stddev_hours) or None.
+
+    Algorithm:
+    1. Count occurrences per day of week
+    2. If any day has >= min_count AND majority of observations → pattern
+    3. Compute time-of-day stddev for that day's occurrences
+    """
+    if len(timestamps) < min_count:
+        return None
+
+    by_dow: dict[int, list[datetime]] = defaultdict(list)
+    for ts in timestamps:
+        by_dow[ts.weekday()].append(ts)
+
+    # Find the dominant day
+    best_dow = max(by_dow, key=lambda k: len(by_dow[k]))
+    count = len(by_dow[best_dow])
+
+    # Must have at least min_count occurrences AND represent majority
+    if count < min_count or count < len(timestamps) * 0.5:
+        return None
+
+    # Check time-of-day consistency on that day
+    hours = [ts.hour + ts.minute / 60 for ts in by_dow[best_dow]]
+    mean_h = sum(hours) / len(hours)
+    stddev = math.sqrt(sum((h - mean_h) ** 2 for h in hours) / len(hours))
+
+    if stddev > max_stddev_hours:
+        return None
+
+    return (_DAY_NAMES[best_dow], count, round(stddev, 2))
+
+
+def _detect_time_of_day_pattern(
+    timestamps: list[datetime],
+    min_count: int = 5,
+    max_stddev_hours: float = 1.0,
+) -> tuple[int, int, float] | None:
+    """Detect if timestamps cluster at a specific time of day.
+
+    Returns (peak_hour, count, stddev_hours) or None.
+
+    Stricter than day-of-week: requires >= 5 observations with stddev < 1h.
+    """
+    if len(timestamps) < min_count:
+        return None
+
+    hours = [ts.hour + ts.minute / 60 for ts in timestamps]
+    mean_h = sum(hours) / len(hours)
+    stddev = math.sqrt(sum((h - mean_h) ** 2 for h in hours) / len(hours))
+
+    if stddev > max_stddev_hours:
+        return None
+
+    peak_hour = round(mean_h)
+    return (peak_hour, len(timestamps), round(stddev, 2))

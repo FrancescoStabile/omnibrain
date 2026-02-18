@@ -21,6 +21,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 import httpx
 from dotenv import load_dotenv
@@ -150,8 +151,8 @@ PROVIDERS = {
         "cost_per_1k_out": 0.0006,
     },
     Provider.LOCAL: {
-        "base_url": "http://localhost:11434/v1",
-        "model": "qwen2.5-coder:3b-instruct",
+        "base_url": os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+        "model": os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:3b-instruct"),
         "api_key_env": "",
         "cost_per_1k_in": 0.0,
         "cost_per_1k_out": 0.0,
@@ -200,6 +201,31 @@ class LLMRouter:
         self.current_provider: Provider = primary
         # Custom provider implementations (override built-in streaming)
         self._custom_providers: dict[Provider, LLMProvider] = {}
+        # Optional hook: called after every stream completes with full token metadata.
+        # Signature: hook(provider, model, input_tokens, output_tokens, source) -> None
+        # Used by TransparencyLogger to log every LLM call without modifying every callsite.
+        self._stream_hook: Any = None
+        self._stream_hook_source: str = ""
+
+    def set_stream_hook(
+        self,
+        hook: Any,
+        source: str = "",
+    ) -> None:
+        """Register a callback invoked after every stream completes.
+
+        The hook receives full token/cost metadata so callers (e.g. TransparencyLogger)
+        can log every LLM call without wrapping every individual call site.
+
+        Args:
+            hook: Callable(provider, model, input_tokens, output_tokens,
+                           cache_read_tokens, cache_creation_tokens, source) → None.
+                  May be sync or async.
+            source: Default source label (e.g. "chat", "briefing").  Individual callers
+                    can override via ``transparency_source`` kwarg on ``stream()``.
+        """
+        self._stream_hook = hook
+        self._stream_hook_source = source
 
     def register_provider(self, provider: Provider, impl: LLMProvider) -> None:
         """Register a custom LLMProvider implementation for a provider.
@@ -246,6 +272,7 @@ class LLMRouter:
         task_type: TaskType | None = None,
         provider_override: Provider | None = None,
         thinking_budget: int | None = None,
+        transparency_source: str = "",
     ) -> AsyncGenerator[StreamChunk, None]:
         """
         Stream LLM response with real-time tokens.
@@ -259,6 +286,9 @@ class LLMRouter:
             thinking_budget: Optional extended thinking budget (tokens) for Claude.
                 If None, uses automatic budget for PLANNING/ANALYSIS tasks with Claude.
                 Set to 0 to disable thinking.
+            transparency_source: Source label for transparency logging (e.g. "chat",
+                "briefing", "proactive"). Overrides the default source set via
+                set_stream_hook(). Pass "" to use the registered default.
         """
         self._current_thinking_budget = thinking_budget
         self._current_task_type = task_type
@@ -278,10 +308,37 @@ class LLMRouter:
         elif self.primary != selected:
             providers.append(self.primary)
 
+        # Counters for the transparency hook
+        _total_input = 0
+        _total_output = 0
+        _total_cache_read = 0
+        _total_cache_creation = 0
+        _model = ""
+        _active_provider = selected
+
         for provider in providers:
             try:
                 async for chunk in self._stream_with_retry(provider, messages, tools, system):
+                    # Accumulate token counts for the hook
+                    if chunk.input_tokens:
+                        _total_input += chunk.input_tokens
+                    if chunk.output_tokens:
+                        _total_output += chunk.output_tokens
+                    if chunk.cache_read_tokens:
+                        _total_cache_read += chunk.cache_read_tokens
+                    if chunk.cache_creation_tokens:
+                        _total_cache_creation += chunk.cache_creation_tokens
+                    if chunk.model:
+                        _model = chunk.model
+                    _active_provider = provider
                     yield chunk
+                # Fire hook after successful stream
+                await self._fire_stream_hook(
+                    _active_provider, _model,
+                    _total_input, _total_output,
+                    _total_cache_read, _total_cache_creation,
+                    transparency_source,
+                )
                 return
             except Exception as e:
                 error_msg = redact_api_keys(str(e))
@@ -290,14 +347,56 @@ class LLMRouter:
                     logger.warning(f"Got 400 from {provider}, retrying without system prompt...")
                     try:
                         async for chunk in self._stream_with_retry(provider, messages, tools, None):
+                            if chunk.input_tokens:
+                                _total_input += chunk.input_tokens
+                            if chunk.output_tokens:
+                                _total_output += chunk.output_tokens
+                            if chunk.model:
+                                _model = chunk.model
+                            _active_provider = provider
                             yield chunk
+                        await self._fire_stream_hook(
+                            _active_provider, _model,
+                            _total_input, _total_output,
+                            _total_cache_read, _total_cache_creation,
+                            transparency_source,
+                        )
                         return
                     except Exception as e2:
                         logger.error(f"Retry also failed: {redact_api_keys(str(e2))}")
 
                 logger.error(f"Streaming failed with {provider}: {error_msg}", exc_info=True)
                 if provider == providers[-1]:
-                    raise Exception(f"All providers failed. Last error: {error_msg}")
+                    raise Exception(f"All providers failed. Last error: {error_msg}") from e
+
+    async def _fire_stream_hook(
+        self,
+        provider: "Provider",
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int,
+        cache_creation_tokens: int,
+        source_override: str,
+    ) -> None:
+        """Fire the registered stream hook (if any) after a stream completes."""
+        if not self._stream_hook:
+            return
+        source = source_override or self._stream_hook_source or "unknown"
+        try:
+            result = self._stream_hook(
+                provider.value if hasattr(provider, "value") else str(provider),
+                model,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+                source,
+            )
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as e:
+            logger.debug(f"Stream hook error (non-fatal): {e}")
 
     async def _stream_with_retry(
         self,

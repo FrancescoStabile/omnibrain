@@ -1,0 +1,31 @@
+# ──────────────────────────────────────────────
+# Skill Manifest — {{SKILL_NAME}}
+# ──────────────────────────────────────────────
+# Docs: https://github.com/FrancescoStabile/omnibrain/blob/main/docs/SKILL-PROTOCOL.md
+
+name: "{{SKILL_SLUG}}"
+version: "1.0.0"
+description: "{{SKILL_DESCRIPTION}}"
+author: "{{AUTHOR}}"
+icon: "🔧"
+category: "other"
+
+# How this skill is triggered
+triggers:
+  - schedule: "every 1h"
+  - on_ask: "(?i)({{SKILL_SLUG}})"
+
+# What this skill needs access to
+permissions:
+  - read_memory
+  - notify
+  - llm_access
+
+# Handler file mapping
+handlers:
+  schedule: "handlers/poll.py"
+  on_ask: "handlers/ask.py"
+  on_event: "handlers/event.py"
+
+# Python dependencies (installed in per-skill venv)
+dependencies: []

@@ -12,7 +12,7 @@ import type { BriefingData, ChatMessage, ChatSession, OnboardingResult, Proposal
 // Types
 // ═══════════════════════════════════════════════════════════════════════════
 
-type View = "home" | "briefing" | "chat" | "timeline" | "contacts" | "knowledge" | "skills" | "settings" | "onboarding";
+type View = "home" | "briefing" | "chat" | "timeline" | "contacts" | "knowledge" | "skills" | "settings" | "onboarding" | "transparency";
 export type { View };
 type Theme = "dark" | "light";
 type OnboardingStep = "welcome" | "connect" | "analyzing" | "reveal" | "interview";

@@ -23,10 +23,11 @@ import json
 import logging
 import sqlite3
 from abc import ABC, abstractmethod
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 logger = logging.getLogger("omnibrain.memory")
 
@@ -302,7 +303,6 @@ class SQLiteMemoryStore(MemoryStore):
 def _chromadb_available() -> bool:
     """Check if ChromaDB is importable and functional."""
     try:
-        import chromadb
         return True
     except Exception:
         return False
@@ -633,17 +633,17 @@ def _sanitize_fts_query(query: str) -> str:
 
 def _row_to_doc(row: sqlite3.Row) -> MemoryDocument:
     """Convert a sqlite3.Row to a MemoryDocument."""
-    contacts = row["contacts"] if "contacts" in row.keys() else "[]"
+    contacts = row["contacts"] if "contacts" in row.keys() else "[]"  # noqa: SIM118
     if isinstance(contacts, str):
         contacts = json.loads(contacts) if contacts else []
 
-    metadata = row["metadata"] if "metadata" in row.keys() else "{}"
+    metadata = row["metadata"] if "metadata" in row.keys() else "{}"  # noqa: SIM118
     if isinstance(metadata, str):
         metadata = json.loads(metadata) if metadata else {}
 
     # rank column exists in FTS5 join queries
     score = 0.0
-    if "rank" in row.keys():
+    if "rank" in row.keys():  # noqa: SIM118
         # FTS5 rank is negative (lower = better). Convert to positive score.
         score = -float(row["rank"]) if row["rank"] else 0.0
 

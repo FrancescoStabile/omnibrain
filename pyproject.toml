@@ -92,6 +92,9 @@ secure = [
     "keyring>=25.0.0",
     "cryptography>=42.0.0",
 ]
+share = [
+    "Pillow>=10.0.0",
+]
 local = [
     # For local embeddings (no OpenAI needed)
     "sentence-transformers>=3.0.0",
@@ -108,6 +111,7 @@ all = [
     "omnibrain[telegram]",
     "omnibrain[chromadb]",
     "omnibrain[secure]",
+    "omnibrain[share]",
     "omnibrain[local]",
 ]
 
@@ -142,7 +146,13 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM"]
-ignore = ["E501"]
+ignore = [
+    "E501",   # line too long — handled by formatter
+    "F405",   # star-import usage — pre-existing codebase pattern
+    "SIM105", # contextlib.suppress — try/except/pass is clearer for KeyboardInterrupt
+    "UP042",  # StrEnum — keeping str(Enum) for Python 3.11 compat
+    "SIM108", # ternary — multi-line if/else is often more readable
+]
 
 [tool.mypy]
 python_version = "3.11"

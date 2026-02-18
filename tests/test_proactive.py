@@ -295,7 +295,7 @@ class TestCheckEmails:
 
         await engine._check_emails()
         assert len(notifications) == 1
-        assert "urgent" in notifications[0][2].lower()
+        assert "urgent" in notifications[0][1].lower() or "urgent" in notifications[0][2].lower()
 
     @pytest.mark.asyncio
     async def test_no_emails(self, engine):

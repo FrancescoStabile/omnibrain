@@ -65,6 +65,9 @@ class ResourceContainer:
         self.approval_gate: Any = None
         self.sanitizer: Any = None
         self.context_tracker: Any = None
+        self.transparency_logger: Any = None
+        self.secure_storage: Any = None
+        self.preference_model: Any = None
 
     def initialize(self) -> None:
         """Create all shared resources once."""
@@ -78,6 +81,7 @@ class ResourceContainer:
         # LLM Router
         try:
             import os
+
             from omnigent.router import LLMRouter, Provider
             if os.environ.get("DEEPSEEK_API_KEY"):
                 self.router = LLMRouter(primary=Provider.DEEPSEEK)
@@ -145,6 +149,39 @@ class ResourceContainer:
         except Exception as e:
             logger.warning("Failed to create ContextTracker: %s", e)
 
+        # TransparencyLogger — audit trail for every LLM call
+        try:
+            from omnibrain.transparency import TransparencyLogger
+            self.transparency_logger = TransparencyLogger(self.config.data_dir)
+            logger.info("TransparencyLogger wired")
+            # Wire the router stream hook so every LLM call is logged automatically
+            if self.router and self.transparency_logger:
+                self.router.set_stream_hook(
+                    self.transparency_logger.log_from_hook, source="daemon"
+                )
+                logger.info("TransparencyLogger hooked into router")
+        except Exception as e:
+            logger.warning("Failed to create TransparencyLogger: %s", e)
+
+        # SecureStorage — encrypted vault for tokens and secrets
+        try:
+            from omnibrain.secure_storage import SecureStorage
+            passphrase = self.config.get("OMNIBRAIN_ENCRYPTION_KEY", "")
+            self.secure_storage = SecureStorage(self.config.data_dir, passphrase=passphrase)
+            # Migrate plaintext Google token to vault on first run
+            self.secure_storage.migrate_google_token(self.config.data_dir)
+            logger.info("SecureStorage wired (encrypted=%s)", self.secure_storage.is_encrypted)
+        except Exception as e:
+            logger.warning("Failed to create SecureStorage: %s", e)
+
+        # PreferenceModel — behavioral profile learned from interactions
+        try:
+            from omnibrain.preference_model import PreferenceModel
+            self.preference_model = PreferenceModel(self.db)
+            logger.info("PreferenceModel wired")
+        except Exception as e:
+            logger.warning("Failed to create PreferenceModel: %s", e)
+
 
 class OmniBrainDaemon:
     """The OmniBrain daemon — runs forever, monitors everything."""
@@ -191,6 +228,17 @@ class OmniBrainDaemon:
         # Initialize shared resources ONCE
         self.resources = ResourceContainer(self.config, self.db)
         self.resources.initialize()
+
+        # Auto-activate demo mode if no real data present
+        try:
+            from omnibrain.demo_data import DemoDataManager
+            memory = getattr(self.resources, "memory", None)
+            demo_mgr = DemoDataManager(self.db, memory=memory)
+            if demo_mgr.should_auto_activate():
+                demo_mgr.activate()
+                logger.info("Demo mode auto-activated (no real data detected)")
+        except Exception as e:
+            logger.debug("Demo mode auto-activation skipped: %s", e)
 
         try:
             # Launch all concurrent tasks
@@ -533,13 +581,13 @@ class OmniBrainDaemon:
             try:
                 await asyncio.wait_for(self._skill_ready.wait(), timeout=30.0)
                 logger.info("✓ SkillRuntime ready")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("SkillRuntime initialization timeout — proceeding anyway")
             
             try:
                 await asyncio.wait_for(self._proactive_ready.wait(), timeout=30.0)
                 logger.info("✓ ProactiveEngine ready")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("ProactiveEngine initialization timeout — proceeding anyway")
             
             engine_status = None
@@ -564,10 +612,22 @@ class OmniBrainDaemon:
             server._sanitizer = rc.sanitizer  # type: ignore[attr-defined]
             server._context_tracker = rc.context_tracker  # type: ignore[attr-defined]
 
+            # Wire new subsystems: transparency + secure storage
+            if rc.transparency_logger:
+                server._transparency_logger = rc.transparency_logger  # type: ignore[attr-defined]
+            if rc.secure_storage:
+                server._secure_storage = rc.secure_storage  # type: ignore[attr-defined]
+
             # Wire SkillRuntime into the API server (now guaranteed to be initialized)
             if self._skill_runtime:
                 server._skill_runtime = self._skill_runtime  # type: ignore[attr-defined]
                 logger.info("✓ SkillRuntime wired to API server")
+
+            # Wire EventBus → WebSocket bridge so live events reach the frontend
+            if self._event_bus:
+                from omnibrain.interfaces.api_server import wire_event_bus_to_ws
+                wire_event_bus_to_ws(server, self._event_bus)
+                logger.info("✓ EventBus → WebSocket bridge wired")
 
             # Run uvicorn programmatically
             import uvicorn

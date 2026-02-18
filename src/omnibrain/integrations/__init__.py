@@ -23,7 +23,7 @@ def _is_auth_error(error: Exception) -> bool:
     ])
 
 
-from omnibrain.integrations.gmail import GmailClient, GmailAuthError
-from omnibrain.integrations.calendar import CalendarClient, CalendarAuthError
+from omnibrain.integrations.calendar import CalendarAuthError, CalendarClient  # noqa: E402
+from omnibrain.integrations.gmail import GmailAuthError, GmailClient  # noqa: E402
 
 __all__ = ["GmailClient", "GmailAuthError", "CalendarClient", "CalendarAuthError", "_is_auth_error"]

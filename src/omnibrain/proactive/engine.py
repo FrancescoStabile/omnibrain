@@ -27,12 +27,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable, Coroutine
 from datetime import datetime, timedelta
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 from omnibrain.briefing import BriefingGenerator
-from omnibrain.models import BriefingType, Observation
-from omnibrain.proactive.scorer import PriorityScorer, ScoringSignals
+from omnibrain.proactive.scorer import PriorityScorer
 
 logger = logging.getLogger("omnibrain.proactive")
 
@@ -365,9 +365,17 @@ class ProactiveEngine:
                     category=category,
                 )
 
+                # Business rule: explicit high/critical urgency always notifies
+                level = result.notification_level
+                if urgency in ("critical", "high") and level not in (
+                    NotificationLevel.CRITICAL,
+                    NotificationLevel.IMPORTANT,
+                ):
+                    level = NotificationLevel.IMPORTANT
+
                 title = event.get("title", "New email")
                 scored_emails.append((
-                    result.notification_level,
+                    level,
                     title,
                     result.reason,
                 ))

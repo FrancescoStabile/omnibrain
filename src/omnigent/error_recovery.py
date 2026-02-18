@@ -76,7 +76,7 @@ def get_recovery_strategy(tool_name: str, error_result: str, *, error_patterns: 
     tool_patterns = (error_patterns or ERROR_PATTERNS).get(tool_name, {})
     error_lower = error_result.lower()
 
-    for pattern_name, pattern_data in tool_patterns.items():
+    for _pattern_name, pattern_data in tool_patterns.items():
         indicators = pattern_data["indicators"]
         if any(ind in error_lower for ind in indicators):
             return pattern_data["strategy"]

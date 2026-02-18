@@ -18,7 +18,7 @@ import base64
 import email.utils
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -180,7 +180,7 @@ class GmailClient:
         max_results = min(max_results, MAX_BATCH_SIZE)
 
         # Build Gmail search query with time filter
-        since_dt = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+        since_dt = datetime.now(UTC) - timedelta(hours=since_hours)
         # Gmail uses epoch seconds for after: filter
         after_epoch = int(since_dt.timestamp())
         full_query = f"after:{after_epoch}"
@@ -536,7 +536,7 @@ def _parse_recipients(to_header: str) -> list[str]:
 def _parse_date(date_str: str) -> datetime:
     """Parse email Date header into datetime."""
     if not date_str:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
     try:
         # email.utils.parsedate_to_datetime handles RFC 2822 dates
@@ -554,7 +554,7 @@ def _parse_date(date_str: str) -> datetime:
                 continue
 
         logger.warning(f"Could not parse date: {date_str}")
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
 
 def _extract_body(payload: dict[str, Any]) -> str:
@@ -612,9 +612,8 @@ def _has_attachments(payload: dict[str, Any]) -> bool:
         filename = part.get("filename", "")
         if filename:
             return True
-        if "parts" in part:
-            if _has_attachments(part):
-                return True
+        if "parts" in part and _has_attachments(part):
+            return True
     return False
 
 

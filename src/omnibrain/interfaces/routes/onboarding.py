@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
 from typing import Any
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 from omnibrain.interfaces.api_models import (
     InsightCardResponse,
@@ -19,6 +21,68 @@ logger = logging.getLogger("omnibrain.api")
 
 def register_onboarding_routes(app, server, verify_api_key) -> None:  # noqa: ANN001
     """Register onboarding routes."""
+
+    # ══════════════════════════════════════════════════════════════════
+    # Streaming SSE endpoint — real-time progress + insight cards
+    # ══════════════════════════════════════════════════════════════════
+
+    @app.get("/api/v1/onboarding/analyze/stream")
+    async def onboarding_analyze_stream(
+        request: Request,
+        token: str = Depends(verify_api_key),
+    ) -> StreamingResponse:
+        """Stream onboarding analysis via Server-Sent Events.
+
+        Yields events:
+          data: {"type": "progress", "step": "emails", "message": "..."}
+          data: {"type": "insight", "icon": "...", "title": "...", "body": "...", ...}
+          data: {"type": "result", ...full result...}
+
+        Email + Calendar fetch run in parallel for speed.
+        """
+        from omnibrain.auth.google_oauth import GoogleOAuthManager
+        from omnibrain.auth.onboarding import OnboardingAnalyzer
+
+        mgr = GoogleOAuthManager(server._data_dir)
+        if not mgr.is_connected():
+            raise HTTPException(
+                status_code=400,
+                detail="Google not connected — complete OAuth first",
+            )
+
+        analyzer = OnboardingAnalyzer(server._data_dir)
+
+        async def event_stream():
+            final_result: dict[str, Any] | None = None
+            try:
+                async for event in analyzer.analyze_streaming():
+                    # Check if client disconnected
+                    if await request.is_disconnected():
+                        logger.info("SSE client disconnected during onboarding")
+                        return
+
+                    if event.get("type") == "result":
+                        final_result = event
+
+                    yield f"data: {_json.dumps(event)}\n\n"
+
+                # Persist onboarding data after streaming completes
+                if final_result:
+                    _persist_onboarding_data(server, final_result)
+
+            except Exception as e:
+                logger.exception("Streaming onboarding failed: %s", e)
+                yield f"data: {_json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.post("/api/v1/onboarding/analyze", response_model=OnboardingResultResponse)
     async def onboarding_analyze(
@@ -203,3 +267,18 @@ def register_onboarding_routes(app, server, verify_api_key) -> None:  # noqa: AN
                 logger.debug("Onboarding extraction failed: %s", e)
 
         return {"ok": True, "saved": saved}
+
+
+def _persist_onboarding_data(server: Any, result: dict[str, Any]) -> None:
+    """Persist onboarding result to DB (shared by POST and SSE endpoints)."""
+    try:
+        user_name = result.get("user_name", "")
+        user_email = result.get("user_email", "")
+
+        server._db.set_preference("onboarding_complete", True, learned_from="onboarding")
+        if user_name:
+            server._db.set_preference("user_name", user_name, learned_from="onboarding")
+        if user_email:
+            server._db.set_preference("user_email", user_email, learned_from="onboarding")
+    except Exception as e:
+        logger.warning("Failed to store onboarding prefs (stream): %s", e)

@@ -24,11 +24,13 @@ import {
   Check,
   X,
   Timer,
+  Sparkles,
 } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { useNavigate } from "@/hooks/useNavigate";
 import {
   api,
+  ApiError,
   type BriefingData,
   type CalendarEventItem,
   type PriorityItem,
@@ -38,6 +40,7 @@ import { Card, CardHeader, CardTitle, CardBody, CardFooter } from "@/components/
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SkeletonCard } from "@/components/ui/skeleton";
+import { ApiErrorRecovery } from "@/components/ui/api-error-recovery";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Section: Email Overview
@@ -431,12 +434,16 @@ export function BriefingPage() {
   const proposals = useStore((s) => s.proposals);
   const setProposals = useStore((s) => s.setProposals);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [error, setError] = useState<ApiError | string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
   const [pullY, setPullY] = useState(0);
   const touchStartY = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const loadBriefing = useCallback(async () => {
     setBriefingLoading(true);
+    setError(null);
     try {
       const [data, props] = await Promise.allSettled([
         api.getBriefingData(),
@@ -444,11 +451,33 @@ export function BriefingPage() {
       ]);
       if (data.status === "fulfilled") setBriefingData(data.value);
       if (props.status === "fulfilled") setProposals(props.value);
+      // If both failed, show error from the first
+      if (data.status === "rejected" && props.status === "rejected") {
+        const err = data.reason;
+        setError(err instanceof ApiError ? err : "Couldn't load briefing data.");
+      }
       setLastUpdated(new Date());
+    } catch (err) {
+      setError(err instanceof ApiError ? err : "Couldn't load briefing data.");
     } finally {
       setBriefingLoading(false);
     }
   }, [setBriefingData, setBriefingLoading, setProposals]);
+
+  // Generate a fresh briefing via AI, then reload
+  const generateNow = useCallback(async () => {
+    setGenerating(true);
+    setGenerateError(null);
+    try {
+      await api.generateBriefing("morning");
+      await loadBriefing();
+    } catch {
+      setGenerateError("Generation failed — is the backend running?");
+      setTimeout(() => setGenerateError(null), 4000);
+    } finally {
+      setGenerating(false);
+    }
+  }, [loadBriefing]);
 
   useEffect(() => {
     loadBriefing();
@@ -482,7 +511,7 @@ export function BriefingPage() {
   return (
     <div
       ref={containerRef}
-      className="max-w-3xl mx-auto p-6 space-y-6 overflow-y-auto h-full"
+      className="max-w-3xl mx-auto p-4 sm:p-6 space-y-6 overflow-y-auto h-full"
       role="region"
       aria-label="Daily briefing"
       onTouchStart={handleTouchStart}
@@ -517,16 +546,36 @@ export function BriefingPage() {
             )}
           </p>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={loadBriefing}
-          disabled={briefingLoading}
-          aria-label="Refresh briefing"
-        >
-          <RefreshCw className={`h-4 w-4 ${briefingLoading ? "animate-spin" : ""}`} />
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={generateNow}
+            disabled={generating || briefingLoading}
+            aria-label="Generate new briefing with AI"
+            title="Generate fresh briefing with AI"
+          >
+            <Sparkles className={`h-3.5 w-3.5 mr-1.5 ${generating ? "animate-pulse" : ""}`} />
+            {generating ? "Generating…" : "Generate"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={loadBriefing}
+            disabled={briefingLoading}
+            aria-label="Refresh briefing"
+          >
+            <RefreshCw className={`h-4 w-4 ${briefingLoading ? "animate-spin" : ""}`} />
+          </Button>
+        </div>
       </header>
+
+      {/* ── Generate error toast ── */}
+      {generateError && (
+        <div className="px-4 py-2 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--error)_8%,transparent)] text-xs text-[var(--error)]">
+          {generateError}
+        </div>
+      )}
 
       {/* ── Loading ── */}
       {briefingLoading && !d && (
@@ -537,8 +586,13 @@ export function BriefingPage() {
         </div>
       )}
 
+      {/* ── Error ── */}
+      {!briefingLoading && error && !d && (
+        <ApiErrorRecovery error={error} onRetry={loadBriefing} />
+      )}
+
       {/* ── Empty ── */}
-      {!briefingLoading && !d && <EmptyBriefing />}
+      {!briefingLoading && !error && !d && <EmptyBriefing />}
 
       {/* ── Sections ── */}
       {d && (

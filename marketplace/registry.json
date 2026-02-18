@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "updated": "2026-02-18T00:00:00Z",
+  "skills": [
+    {
+      "name": "spotify-tracker",
+      "version": "1.0.0",
+      "description": "Track your listening patterns and get music insights",
+      "author": "community",
+      "repo": "github.com/omnibrain-community/skill-spotify-tracker",
+      "downloads": 0,
+      "stars": 0,
+      "verified": false,
+      "icon": "🎵",
+      "category": "entertainment",
+      "permissions": ["read_memory", "write_memory", "notify"]
+    },
+    {
+      "name": "github-digest",
+      "version": "1.0.0",
+      "description": "Daily digest of your GitHub activity, PRs, and issues",
+      "author": "community",
+      "repo": "github.com/omnibrain-community/skill-github-digest",
+      "downloads": 0,
+      "stars": 0,
+      "verified": false,
+      "icon": "💻",
+      "category": "developer",
+      "permissions": ["read_memory", "write_memory", "notify", "llm_access"]
+    },
+    {
+      "name": "news-briefing",
+      "version": "1.0.0",
+      "description": "Personalized news briefing based on your interests",
+      "author": "community",
+      "repo": "github.com/omnibrain-community/skill-news-briefing",
+      "downloads": 0,
+      "stars": 0,
+      "verified": false,
+      "icon": "📰",
+      "category": "information",
+      "permissions": ["read_memory", "notify", "llm_access"]
+    },
+    {
+      "name": "finance-tracker",
+      "version": "1.0.0",
+      "description": "Track expenses and get spending insights from email receipts",
+      "author": "community",
+      "repo": "github.com/omnibrain-community/skill-finance-tracker",
+      "downloads": 0,
+      "stars": 0,
+      "verified": false,
+      "icon": "💰",
+      "category": "finance",
+      "permissions": ["read_memory", "write_memory", "notify", "llm_access"]
+    },
+    {
+      "name": "habit-tracker",
+      "version": "1.0.0",
+      "description": "Build habits with daily reminders and streak tracking",
+      "author": "community",
+      "repo": "github.com/omnibrain-community/skill-habit-tracker",
+      "downloads": 0,
+      "stars": 0,
+      "verified": false,
+      "icon": "✅",
+      "category": "productivity",
+      "permissions": ["read_memory", "write_memory", "notify"]
+    }
+  ]
+}

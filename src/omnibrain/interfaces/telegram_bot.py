@@ -35,12 +35,11 @@ logger = logging.getLogger("omnibrain.telegram")
 # Lazy imports for telegram — allows testing without actual library
 _telegram_available = False
 try:
-    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     from telegram.ext import (
         Application,
         CallbackQueryHandler,
         CommandHandler,
-        ContextTypes,
         MessageHandler,
         filters,
     )

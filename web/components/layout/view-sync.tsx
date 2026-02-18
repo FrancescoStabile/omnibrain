@@ -20,6 +20,7 @@ const pathToView: Record<string, View> = {
   "/knowledge": "knowledge",
   "/skills": "skills",
   "/settings": "settings",
+  "/transparency": "transparency",
 };
 
 export function ViewSync() {

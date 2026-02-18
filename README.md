@@ -2,18 +2,32 @@
 
 # OmniBrain
 
-**Your second brain. Open source. Unstoppable.**
+**Your AI must be yours.**
 
 An open-source AI platform that knows who you are, remembers everything, works 24/7, and grows smarter through community-built Skills.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-983%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1650%2B%20passing-brightgreen.svg)]()
 [![Build in Public](https://img.shields.io/badge/build%20in%20public-daily%20on%20X-black.svg)](https://x.com/Francesco_Sta)
 
 [Manifesto](manifesto.md) · [Docs](docs/INDEX.md) · [Skill Protocol](docs/SKILL-PROTOCOL.md) · [Contributing](CONTRIBUTING.md)
 
 </div>
+
+---
+
+## Install in 2 Minutes
+
+```bash
+git clone https://github.com/FrancescoStabile/omnibrain
+cd omnibrain
+cp .env.example .env   # add your API key
+docker compose up
+# Open http://localhost:3000
+```
+
+That's it. Your data stays on your machine. Always.
 
 ---
 
@@ -84,7 +98,31 @@ permissions:
   - notify
 ```
 
-Full spec: [docs/SKILL-PROTOCOL.md](docs/SKILL-PROTOCOL.md)
+### Create Your Own Skill
+
+```bash
+# Scaffold a new skill in 10 seconds
+omnibrain-skill init my-awesome-skill --category productivity
+
+# Generated structure:
+# my-awesome-skill/
+# ├── skill.yaml        ← manifest (triggers, permissions)
+# ├── handlers/
+# │   ├── poll.py       ← periodic background task
+# │   ├── ask.py        ← user question handler
+# │   └── event.py      ← system event handler
+# ├── tests/
+# │   └── test_handlers.py
+# └── README.md
+
+# Run tests
+omnibrain-skill test
+
+# Install locally
+cp -r my-awesome-skill ~/.omnibrain/skills/
+```
+
+Full spec: [docs/SKILL-PROTOCOL.md](docs/SKILL-PROTOCOL.md) · Developer guide: [docs/SKILL-DEVELOPER-GUIDE.md](docs/SKILL-DEVELOPER-GUIDE.md)
 
 ---
 
@@ -128,26 +166,28 @@ Deep dive: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ## Quick Start
 
-### Self-hosted (free forever)
+### Docker (recommended)
 
 ```bash
-# Clone & setup
 git clone https://github.com/FrancescoStabile/omnibrain.git
 cd omnibrain
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-
-# Verify (1474 tests should pass)
-pytest -x -q
-
-# Configure
 cp .env.example .env
-# Edit .env with your API keys (at least one LLM provider)
+# Edit .env — add at least one LLM API key
+docker compose up -d
+# Open http://localhost:3000
+```
 
-# Start
-omnibrain start
-# Open http://localhost:8080
+### From source
+
+```bash
+git clone https://github.com/FrancescoStabile/omnibrain.git
+cd omnibrain
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+pytest -x -q            # 1608+ tests should pass
+cp .env.example .env    # add your API keys
+omnibrain start          # Backend on :7432
+cd web && npm install && npm run dev  # Frontend on :3000
 ```
 
 ### Configuration
@@ -192,20 +232,19 @@ omnibrain/
 │   └── tools/                   # Email, calendar, memory tools
 │
 ├── skills/                      # Built-in Skills (Skill Protocol)
+├── marketplace/                 # Community skill registry
 ├── web/                         # Web UI (Next.js + shadcn/ui)
 ├── scripts/                     # Install, systemd, Google setup
-└── tests/                       # 983 passing tests
+└── tests/                       # 1650+ passing tests
 ```
 
 ---
 
 ## Status
 
-**1474 tests passing.** Core engine, memory, knowledge graph, proactive engine, briefings, approval, Gmail, Calendar, Web UI, Skill Runtime — all built and tested.
+**1650+ tests passing.** Core engine, memory, knowledge graph, proactive engine, briefings, approval, Gmail, Calendar, Web UI, Skill Runtime, sandbox isolation, preference learning, transparency logging, GDPR data export/wipe — all built and tested.
 
-Building: Skill Protocol runtime, Web UI, marketplace, and the 30-second onboarding experience.
-
-Follow the build: [@Francesco_Sta on X](https://x.com/Francesco_Sta)
+Building in public: [@Francesco_Sta on X](https://x.com/Francesco_Sta)
 
 ---
 

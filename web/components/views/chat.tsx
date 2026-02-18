@@ -7,11 +7,11 @@
 "use client";
 
 import { useRef, useState, useEffect, useMemo, useCallback, type FormEvent, type KeyboardEvent } from "react";
-import { Send, Sparkles, Brain, Copy, Check, RotateCcw, AlertCircle, Plus, Trash2, MessageSquare, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Send, Sparkles, Brain, Copy, Check, RotateCcw, AlertCircle, Plus, Trash2, MessageSquare, PanelLeftClose, PanelLeftOpen, Wrench, BookOpen } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useStore, type View } from "@/lib/store";
-import { streamChat, api, type ChatMessage, type ChatAction } from "@/lib/api";
+import { streamChat, api, type ChatMessage, type ChatAction, type KnowledgeReference } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "@/hooks/useNavigate";
@@ -66,6 +66,75 @@ function buildSuggestions(onboardingResult: ReturnType<typeof useStore.getState>
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Source Citations
+// ═══════════════════════════════════════════════════════════════════════════
+
+function SourceCitations({ refs }: { refs: KnowledgeReference[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? refs : refs.slice(0, 2);
+
+  return (
+    <div className="mt-3 pt-2 border-t border-[var(--border-subtle)]">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 text-[10px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors mb-1.5"
+      >
+        <BookOpen className="h-3 w-3" />
+        {refs.length} source{refs.length !== 1 ? "s" : ""}
+        {refs.length > 2 && (
+          <span className="ml-1 text-[var(--brand-primary)]">{expanded ? "▲ less" : "▼ more"}</span>
+        )}
+      </button>
+      <div className="space-y-1">
+        {visible.map((ref, i) => (
+          <div
+            key={i}
+            className="flex items-start gap-2 px-2 py-1.5 rounded-[var(--radius-sm)] bg-[var(--bg-tertiary)]"
+          >
+            <span className="shrink-0 mt-0.5 h-3.5 w-3.5 rounded-full bg-[var(--brand-primary)]/20 text-[var(--brand-primary)] text-[9px] flex items-center justify-center font-semibold">
+              {i + 1}
+            </span>
+            <div className="min-w-0">
+              <p className="text-[11px] text-[var(--text-secondary)] leading-snug line-clamp-2">{ref.text}</p>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="text-[10px] text-[var(--text-tertiary)]">{ref.source}</span>
+                {ref.date && <span className="text-[10px] text-[var(--text-tertiary)]">· {ref.date}</span>}
+                {ref.score !== undefined && (
+                  <span className="text-[10px] text-[var(--text-tertiary)]">· {Math.round(ref.score * 100)}%</span>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Follow-up Suggestions
+// ═══════════════════════════════════════════════════════════════════════════
+
+function FollowUpSuggestions({ followups, onSend }: { followups: string[]; onSend: (action: ChatAction) => void }) {
+  return (
+    <div className="mt-3 pt-2 border-t border-[var(--border-subtle)] space-y-1.5">
+      <span className="text-[10px] text-[var(--text-tertiary)]">Follow up:</span>
+      <div className="flex flex-wrap gap-1.5">
+        {followups.map((f, i) => (
+          <button
+            key={i}
+            onClick={() => onSend({ type: "draft", title: f, data: { prompt: f } })}
+            className="px-2.5 py-1 rounded-full bg-[var(--bg-tertiary)] border border-[var(--border-subtle)] text-[11px] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--brand-primary)]/30 transition-colors"
+          >
+            {f}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Chat Bubble
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -107,6 +176,16 @@ function ChatBubble({ message, onAction }: { message: ChatMessage; onAction: (ac
               {message.content}
             </ReactMarkdown>
           </div>
+        )}
+
+        {/* Source citations */}
+        {!isUser && message.references && message.references.length > 0 && (
+          <SourceCitations refs={message.references} />
+        )}
+
+        {/* Suggested follow-ups */}
+        {!isUser && message.suggested_followups && message.suggested_followups.length > 0 && (
+          <FollowUpSuggestions followups={message.suggested_followups} onSend={onAction} />
         )}
 
         {/* Actions */}
@@ -167,6 +246,26 @@ function TypingIndicator() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Tool Call Indicator — shows agent tool execution inline
+// ═══════════════════════════════════════════════════════════════════════════
+
+function ToolCallIndicator({ toolName, done }: { toolName: string; done?: boolean }) {
+  // Format tool names nicely: "search_emails" → "Searching emails"
+  const label = toolName
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+
+  return (
+    <div className="flex justify-start animate-[fade-in_200ms_ease-out]">
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-[var(--radius-md)] bg-[var(--bg-tertiary)] border border-[var(--border-subtle)] text-xs text-[var(--text-tertiary)]">
+        <Wrench className={cn("h-3 w-3 shrink-0", !done && "animate-[spin_2s_linear_infinite]")} />
+        <span>{done ? `✓ ${label}` : label}</span>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Main ChatPage
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -187,6 +286,8 @@ export function ChatPage() {
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [failedMessage, setFailedMessage] = useState<string | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [transitioning, setTransitioning] = useState(false);
+  const [activeTools, setActiveTools] = useState<{ name: string; done: boolean }[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const navigate = useNavigate();
@@ -272,11 +373,41 @@ export function ChatPage() {
       for await (const event of streamChat(text.trim(), chatSessionId)) {
         if (event.type === "token" && event.content) {
           appendToLastAssistant(event.content);
-        }
-        if (event.type === "done") {
+        } else if (event.type === "tool_start" && (event as { tool_name?: string }).tool_name) {
+          const toolName = (event as { tool_name: string }).tool_name;
+          setActiveTools((prev) => [...prev, { name: toolName, done: false }]);
+        } else if (event.type === "tool_result" && (event as { tool_name?: string }).tool_name) {
+          const toolName = (event as { tool_name: string }).tool_name;
+          setActiveTools((prev) =>
+            prev.map((t) => t.name === toolName ? { ...t, done: true } : t)
+          );
+          // Remove completed tool after a short delay
+          setTimeout(() => {
+            setActiveTools((prev) => prev.filter((t) => !(t.name === toolName && t.done)));
+          }, 1200);
+        } else if (event.type === "done") {
           // Backend may return session_id — store it
           if (event.session_id && event.session_id !== chatSessionId) {
             setChatSessionId(event.session_id);
+          }
+          // Attach references and follow-up suggestions to the last assistant message
+          const doneEvent = event as {
+            session_id?: string;
+            references?: import("@/lib/api").KnowledgeReference[];
+            suggested_followups?: string[];
+          };
+          if (doneEvent.references?.length || doneEvent.suggested_followups?.length) {
+            setMessages(
+              useStore.getState().messages.map((m, i, arr) =>
+                i === arr.length - 1 && m.role === "assistant"
+                  ? {
+                      ...m,
+                      references: doneEvent.references,
+                      suggested_followups: doneEvent.suggested_followups,
+                    }
+                  : m
+              )
+            );
           }
           break;
         }
@@ -294,6 +425,7 @@ export function ChatPage() {
       );
     } finally {
       setChatLoading(false);
+      setActiveTools([]);  // Clear any pending tool indicators
     }
   };
 
@@ -318,11 +450,16 @@ export function ChatPage() {
 
   const switchSession = async (sessionId: string) => {
     if (sessionId === chatSessionId) return;
+    setTransitioning(true);
+    // Brief fade-out before switching
+    await new Promise((r) => setTimeout(r, 150));
     setChatSessionId(sessionId);
     setHistoryLoaded(false);
     setMessages([]);
     setFailedMessage(null);
     setSessionsOpen(false);
+    // Fade back in
+    requestAnimationFrame(() => setTransitioning(false));
   };
 
   const deleteSession = async (sessionId: string) => {
@@ -380,7 +517,7 @@ export function ChatPage() {
   const isEmpty = messages.length === 0;
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full h-[100dvh] sm:h-full">
       {/* ── Header with session controls ── */}
       <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-4 py-2">
         <Button
@@ -442,7 +579,10 @@ export function ChatPage() {
         )}
 
         {/* ── Main chat area ── */}
-        <div className="flex flex-col flex-1 min-w-0">
+        <div className={cn(
+          "flex flex-col flex-1 min-w-0 transition-opacity duration-150",
+          transitioning ? "opacity-0" : "opacity-100",
+        )}>
       {/* ── Messages ── */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6">
         {isEmpty ? (
@@ -490,13 +630,16 @@ export function ChatPage() {
                 </Button>
               </div>
             )}
-            {chatLoading && <TypingIndicator />}
+            {activeTools.map((t, i) => (
+              <ToolCallIndicator key={`${t.name}-${i}`} toolName={t.name} done={t.done} />
+            ))}
+            {chatLoading && activeTools.length === 0 && <TypingIndicator />}
           </div>
         )}
       </div>
 
       {/* ── Input ── */}
-      <div className="border-t border-[var(--border-subtle)] bg-[var(--bg-primary)] px-4 sm:px-6 py-3 sm:py-4">
+      <div className="sticky bottom-0 border-t border-[var(--border-subtle)] bg-[var(--bg-primary)] px-4 sm:px-6 py-3 sm:py-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         <form
           onSubmit={handleSubmit}
           className="max-w-3xl mx-auto flex items-center gap-3"

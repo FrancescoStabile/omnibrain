@@ -66,3 +66,4 @@ web/node_modules/
 # run.sh artifacts
 .log-*.txt
 .pid-*
+MASTER-PLAN.md

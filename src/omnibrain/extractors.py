@@ -14,9 +14,10 @@ This follows Omnigent's EXTRACTORS pattern from manifesto Section 9:
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from omnibrain.models import ContactInfo, EventSource
+from omnibrain.models import ContactInfo
 
 logger = logging.getLogger("omnibrain.extractors")
 
@@ -25,6 +26,19 @@ ExtractorFn = Callable[[Any, dict[str, Any], dict[str, Any]], dict[str, Any]]
 
 # Global extractors registry
 EXTRACTORS: dict[str, ExtractorFn] = {}
+
+
+def _ensure_dict(result: Any) -> dict[str, Any]:
+    """Ensure result is a dict, parsing JSON string if needed."""
+    if isinstance(result, dict):
+        return result
+    if isinstance(result, str):
+        import json
+        try:
+            return json.loads(result)
+        except Exception:
+            pass
+    return {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -52,6 +66,7 @@ def extract_emails(
     Returns:
         Dict with extracted contacts, event summaries, and stats.
     """
+    result = _ensure_dict(result)
     emails = result.get("emails", [])
     if not emails:
         return {"contacts": [], "summaries": [], "stats": {"total": 0}}
@@ -116,6 +131,7 @@ def extract_classification(
     Returns:
         Dict with classification details and any proposed actions.
     """
+    result = _ensure_dict(result)
     urgency = result.get("urgency", "medium")
     category = result.get("category", "fyi")
     action = result.get("action", "archive")
@@ -155,6 +171,7 @@ def extract_calendar(
     - Meeting stats (total time, attendee counts)
     - Upcoming conflict detection
     """
+    result = _ensure_dict(result)
     events = result.get("events", [])
     if not events:
         return {"events": [], "stats": {"total": 0, "total_minutes": 0}}
@@ -211,6 +228,7 @@ def extract_memory_results(
     Returns:
         Dict with organized results, contacts, and stats.
     """
+    result = _ensure_dict(result)
     results = result.get("results", [])
     count = result.get("count", 0)
 
@@ -260,6 +278,7 @@ def extract_observation(
     Returns:
         Dict with stored observation confirmation.
     """
+    result = _ensure_dict(result)
     return {
         "stored": result.get("stored", False),
         "pattern_type": result.get("pattern_type", ""),

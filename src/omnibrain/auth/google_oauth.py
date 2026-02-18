@@ -197,8 +197,8 @@ class GoogleOAuthManager:
         """
         client = self._load_client_config()
 
-        import urllib.request
         import urllib.parse
+        import urllib.request
 
         payload = urllib.parse.urlencode({
             "code": code,

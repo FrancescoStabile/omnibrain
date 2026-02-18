@@ -20,15 +20,53 @@ class ProviderPricing:
 
 
 # Provider pricing (as of Feb 2026)
+# Keyed by provider AND model for accurate cost tracking.
+# Lookup order: exact model → provider default → zero.
 PRICING = {
+    # ── DeepSeek ──
     "deepseek": ProviderPricing(input_per_million=0.14, output_per_million=0.28),
+    "deepseek-chat": ProviderPricing(input_per_million=0.14, output_per_million=0.28),
+    "deepseek-reasoner": ProviderPricing(input_per_million=0.55, output_per_million=2.19),
+    # ── Anthropic Claude ──
     "claude": ProviderPricing(
         input_per_million=3.00, output_per_million=15.00,
         cache_read_per_million=0.30, cache_creation_per_million=3.75,
     ),
+    "claude-sonnet-4-20250514": ProviderPricing(
+        input_per_million=3.00, output_per_million=15.00,
+        cache_read_per_million=0.30, cache_creation_per_million=3.75,
+    ),
+    "claude-haiku-3-5": ProviderPricing(
+        input_per_million=0.80, output_per_million=4.00,
+        cache_read_per_million=0.08, cache_creation_per_million=1.00,
+    ),
+    # ── OpenAI ──
     "openai": ProviderPricing(input_per_million=0.15, output_per_million=0.60),
+    "gpt-4o": ProviderPricing(input_per_million=2.50, output_per_million=10.00),
+    "gpt-4o-mini": ProviderPricing(input_per_million=0.15, output_per_million=0.60),
+    "gpt-4.1": ProviderPricing(input_per_million=2.00, output_per_million=8.00),
+    "gpt-4.1-mini": ProviderPricing(input_per_million=0.40, output_per_million=1.60),
+    "gpt-4.1-nano": ProviderPricing(input_per_million=0.10, output_per_million=0.40),
+    # ── Local (Ollama) — always free ──
     "ollama": ProviderPricing(input_per_million=0.0, output_per_million=0.0),
+    "local": ProviderPricing(input_per_million=0.0, output_per_million=0.0),
 }
+
+
+def get_pricing(provider: str, model: str = "") -> ProviderPricing:
+    """Resolve pricing: model-specific first, then provider default, then zero.
+
+    This allows accurate cost tracking when the router reports the actual
+    model name (e.g. ``"gpt-4o-mini"``) rather than just ``"openai"``.
+    """
+    # Try exact model match first
+    if model and model in PRICING:
+        return PRICING[model]
+    # Fall back to provider key
+    provider_key = provider.lower()
+    if provider_key in PRICING:
+        return PRICING[provider_key]
+    return ProviderPricing(input_per_million=0.0, output_per_million=0.0)
 
 
 class CostTracker:
@@ -56,27 +94,32 @@ class CostTracker:
         task_type: str = "",
         cache_read_tokens: int = 0,
         cache_creation_tokens: int = 0,
+        model: str = "",
     ):
         """Add tokens for a provider, optionally tracking task type and cache tokens."""
         provider = provider.lower()
         if provider not in self.tokens_by_provider:
-            self.tokens_by_provider[provider] = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0}
+            self.tokens_by_provider[provider] = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0, "model": ""}
         self.tokens_by_provider[provider]["input"] += input_tokens
         self.tokens_by_provider[provider]["output"] += output_tokens
         self.tokens_by_provider[provider]["cache_read"] += cache_read_tokens
         self.tokens_by_provider[provider]["cache_creation"] += cache_creation_tokens
+        if model:
+            self.tokens_by_provider[provider]["model"] = model
         if task_type:
-            cost = self._compute_cost(provider, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens)
+            cost = self._compute_cost(provider, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, model)
             self.costs_by_task_type[task_type] = self.costs_by_task_type.get(task_type, 0.0) + cost
 
     def _compute_cost(
         self, provider: str, input_tokens: int, output_tokens: int,
         cache_read_tokens: int = 0, cache_creation_tokens: int = 0,
+        model: str = "",
     ) -> float:
-        """Compute cost for a specific token usage, including cache tokens."""
-        if provider not in PRICING:
-            return 0.0
-        pricing = PRICING[provider]
+        """Compute cost for a specific token usage, including cache tokens.
+
+        Uses model-level pricing when available for maximum accuracy.
+        """
+        pricing = get_pricing(provider, model)
         input_cost = (input_tokens / 1_000_000) * pricing.input_per_million
         output_cost = (output_tokens / 1_000_000) * pricing.output_per_million
         cache_read_cost = (cache_read_tokens / 1_000_000) * pricing.cache_read_per_million
@@ -90,12 +133,14 @@ class CostTracker:
     def get_provider_cost(self, provider: str) -> float:
         """Get cost for a specific provider, including cache token costs."""
         provider = provider.lower()
-        if provider not in self.tokens_by_provider or provider not in PRICING:
+        if provider not in self.tokens_by_provider:
             return 0.0
         tokens = self.tokens_by_provider[provider]
+        model = tokens.get("model", "")
         return self._compute_cost(
             provider, tokens["input"], tokens["output"],
             tokens.get("cache_read", 0), tokens.get("cache_creation", 0),
+            model=model if isinstance(model, str) else "",
         )
 
     def get_total_cost(self) -> float:

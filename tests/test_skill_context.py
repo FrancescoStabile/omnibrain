@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from omnibrain.skill_context import EventBus, NotifyLevel, PermissionDenied, SkillContext
+from omnibrain.skill_context import EventBus, NotifyLevel, PermissionDeniedError, SkillContext
 from omnibrain.db import OmniBrainDB
 
 
@@ -46,8 +46,8 @@ def full_ctx(tmp_db, event_bus):
     return SkillContext(
         skill_name="test-skill",
         permissions={
-            "read_memory", "write_memory", "notify",
-            "llm_access", "read_profile", "skill_data",
+            "read_memory", "write_memory", "notify", "propose_action",
+            "llm_access", "read_profile", "skill_storage",
         },
         db=tmp_db,
         event_bus=event_bus,
@@ -87,7 +87,7 @@ class TestPermissions:
         assert full_ctx.has_permission("google_gmail") is False
 
     def test_require_raises(self, empty_ctx):
-        with pytest.raises(PermissionDenied, match="bare-skill"):
+        with pytest.raises(PermissionDeniedError, match="bare-skill"):
             empty_ctx._require("read_memory")
 
     def test_require_passes(self, full_ctx):
@@ -95,22 +95,22 @@ class TestPermissions:
 
     @pytest.mark.asyncio
     async def test_memory_search_denied(self, empty_ctx):
-        with pytest.raises(PermissionDenied):
+        with pytest.raises(PermissionDeniedError):
             await empty_ctx.memory_search("hello")
 
     @pytest.mark.asyncio
     async def test_memory_store_denied(self, readonly_ctx):
-        with pytest.raises(PermissionDenied):
+        with pytest.raises(PermissionDeniedError):
             await readonly_ctx.memory_store("data")
 
     @pytest.mark.asyncio
     async def test_notify_denied(self, readonly_ctx):
-        with pytest.raises(PermissionDenied):
+        with pytest.raises(PermissionDeniedError):
             await readonly_ctx.notify("message")
 
     @pytest.mark.asyncio
     async def test_llm_denied(self, empty_ctx):
-        with pytest.raises(PermissionDenied):
+        with pytest.raises(PermissionDeniedError):
             await empty_ctx.llm_complete("prompt")
 
     def test_permissions_are_frozen(self, full_ctx):
@@ -177,7 +177,7 @@ class TestNotifications:
 
     @pytest.mark.asyncio
     async def test_propose_action_no_db(self, empty_ctx):
-        ctx = SkillContext(skill_name="t", permissions={"notify"})
+        ctx = SkillContext(skill_name="t", permissions={"notify", "propose_action"})
         result = await ctx.propose_action("t", "t", "d")
         assert result == 0
 
@@ -208,7 +208,7 @@ class TestLocalStorage:
 
     @pytest.mark.asyncio
     async def test_no_db_returns_default(self):
-        ctx = SkillContext(skill_name="t", permissions=set())
+        ctx = SkillContext(skill_name="t", permissions={"skill_storage"})
         val = await ctx.get_data("key", "default")
         assert val == "default"
 
@@ -216,11 +216,11 @@ class TestLocalStorage:
     async def test_isolation_between_skills(self, tmp_db, event_bus):
         """Data written by skill A should not be accessible by skill B."""
         ctx_a = SkillContext(
-            skill_name="skill-a", permissions=set(),
+            skill_name="skill-a", permissions={"skill_storage"},
             db=tmp_db, event_bus=event_bus,
         )
         ctx_b = SkillContext(
-            skill_name="skill-b", permissions=set(),
+            skill_name="skill-b", permissions={"skill_storage"},
             db=tmp_db, event_bus=event_bus,
         )
         await ctx_a.set_data("secret", "a-value")
@@ -340,7 +340,8 @@ class TestUserProperties:
         assert empty_ctx.user_timezone == "UTC"
 
     def test_preferences_without_db(self, empty_ctx):
-        assert empty_ctx.user_preferences == {}
+        with pytest.raises(PermissionDeniedError):
+            _ = empty_ctx.user_preferences
 
     def test_preferences_from_db(self, full_ctx, tmp_db):
         tmp_db.set_preference("theme", "dark")
